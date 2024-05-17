@@ -1,0 +1,6 @@
+{
+  "detectors_to_exclude": "",
+  "disable_color": false,
+  "filter_paths": "(node_modules/ | contracts/test/ | contracts/openzeppelin/)",
+  "ignore_compile": true
+}

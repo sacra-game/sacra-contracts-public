@@ -1,17 +1,20 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.23;
 
-import {IController} from "../interfaces/IController.sol";
-import {IOracle} from "../interfaces/IOracle.sol";
-import {IStatController} from "../interfaces/IStatController.sol";
-import {IStoryController} from "../interfaces/IStoryController.sol";
-import {ITreasury} from "../interfaces/ITreasury.sol";
-import {IDungeonFactory} from "../interfaces/IDungeonFactory.sol";
-import {IReinforcementController} from "../interfaces/IReinforcementController.sol";
-import {IGameToken} from "../interfaces/IGameToken.sol";
-import {IGOC} from "../interfaces/IGOC.sol";
-import {IItemController} from "../interfaces/IItemController.sol";
-import {IHeroController} from "../interfaces/IHeroController.sol";
+import "../interfaces/IController.sol";
+import "../interfaces/IOracle.sol";
+import "../interfaces/IStatController.sol";
+import "../interfaces/IStoryController.sol";
+import "../interfaces/ITreasury.sol";
+import "../interfaces/IDungeonFactory.sol";
+import "../interfaces/IReinforcementController.sol";
+import "../interfaces/IGameToken.sol";
+import "../interfaces/IGOC.sol";
+import "../interfaces/IItemController.sol";
+import "../interfaces/IHeroController.sol";
+import "../interfaces/IUserController.sol";
+import "../interfaces/IGuildController.sol";
+import "../interfaces/IRewardsPool.sol";
 
 /// @notice Provide context-struct with all controller addresses and routines for lazy init
 /// Usage:
@@ -34,6 +37,9 @@ library ControllerContextLib {
     IItemController itemController;
     IHeroController heroController;
     IGameToken gameToken;
+    IUserController userController;
+    IGuildController guildController;
+    IRewardsPool rewardsPool;
   }
 
   function init(IController controller) internal pure returns (ControllerContext memory cc) {
@@ -109,5 +115,26 @@ library ControllerContextLib {
       cc.gameToken = IGameToken(cc.controller.gameToken());
     }
     return cc.gameToken;
+  }
+
+  function getUserController(ControllerContext memory cc) internal view returns (IUserController userController) {
+    if (address(cc.userController) == address(0)) {
+      cc.userController = IUserController(cc.controller.userController());
+    }
+    return cc.userController;
+  }
+
+  function getGuildController(ControllerContext memory cc) internal view returns (IGuildController guildController) {
+    if (address(cc.guildController) == address(0)) {
+      cc.guildController = IGuildController(cc.controller.guildController());
+    }
+    return cc.guildController;
+  }
+
+  function getRewardsPool(ControllerContext memory cc) internal view returns (IRewardsPool rewardsPool) {
+    if (address(cc.rewardsPool) == address(0)) {
+      cc.rewardsPool = IRewardsPool(cc.controller.rewardsPool());
+    }
+    return cc.rewardsPool;
   }
 }

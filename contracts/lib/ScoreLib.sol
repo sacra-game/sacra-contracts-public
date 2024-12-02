@@ -49,7 +49,8 @@ library ScoreLib {
   // hero
   uint public constant HERO_LEVEL_SCORE = 1000;
 
-  function attributesScore(int32[] memory attributes) internal pure returns (uint) {
+  /// @param isForReinforcement If true calculate score using 12 main attributes only. Otherwise use all attributes.
+  function attributesScore(int32[] memory attributes, bool isForReinforcement) internal pure returns (uint) {
     uint result;
     {
       result += (attributes[uint(IStatController.ATTRIBUTES.STRENGTH)]).toUint() * STRENGTH
@@ -64,61 +65,67 @@ library ScoreLib {
     }
     {
       result +=
-        (attributes[uint(IStatController.ATTRIBUTES.LIFE)]).toUint() * LIFE
-        + (attributes[uint(IStatController.ATTRIBUTES.MANA)]).toUint() * MANA
-        + (attributes[uint(IStatController.ATTRIBUTES.FIRE_RESISTANCE)]).toUint() * ELEMENT_RESIST
+        (attributes[uint(IStatController.ATTRIBUTES.FIRE_RESISTANCE)]).toUint() * ELEMENT_RESIST
         + (attributes[uint(IStatController.ATTRIBUTES.COLD_RESISTANCE)]).toUint() * ELEMENT_RESIST
         + (attributes[uint(IStatController.ATTRIBUTES.LIGHTNING_RESISTANCE)]).toUint() * ELEMENT_RESIST;
     }
-    {
-      result +=
-        (attributes[uint(IStatController.ATTRIBUTES.DMG_AGAINST_HUMAN)]).toUint() * RACE_SPECIFIC
-        + (attributes[uint(IStatController.ATTRIBUTES.DMG_AGAINST_UNDEAD)]).toUint() * RACE_SPECIFIC
-        + (attributes[uint(IStatController.ATTRIBUTES.DMG_AGAINST_DAEMON)]).toUint() * RACE_SPECIFIC
-        + (attributes[uint(IStatController.ATTRIBUTES.DMG_AGAINST_BEAST)]).toUint() * RACE_SPECIFIC
-        + (attributes[uint(IStatController.ATTRIBUTES.DEF_AGAINST_HUMAN)]).toUint() * RACE_SPECIFIC
-        + (attributes[uint(IStatController.ATTRIBUTES.DEF_AGAINST_UNDEAD)]).toUint() * RACE_SPECIFIC
-        + (attributes[uint(IStatController.ATTRIBUTES.DEF_AGAINST_DAEMON)]).toUint() * RACE_SPECIFIC
-        + (attributes[uint(IStatController.ATTRIBUTES.DEF_AGAINST_BEAST)]).toUint() * RACE_SPECIFIC;
-    }
-    {
-      result +=
-        (attributes[uint(IStatController.ATTRIBUTES.STUN)]).toUint() * STATUSES
-        + (attributes[uint(IStatController.ATTRIBUTES.BURN)]).toUint() * STATUSES
-        + (attributes[uint(IStatController.ATTRIBUTES.FREEZE)]).toUint() * STATUSES
-        + (attributes[uint(IStatController.ATTRIBUTES.CONFUSE)]).toUint() * STATUSES
-        + (attributes[uint(IStatController.ATTRIBUTES.CURSE)]).toUint() * STATUSES
-        + (attributes[uint(IStatController.ATTRIBUTES.POISON)]).toUint() * STATUSES;
-    }
-    {
-      result +=
-        (attributes[uint(IStatController.ATTRIBUTES.LIFE_CHANCES)]).toUint() * LIFE_CHANCES
-        + (attributes[uint(IStatController.ATTRIBUTES.MAGIC_FIND)]).toUint() * MAGIC_FIND
-        + (attributes[uint(IStatController.ATTRIBUTES.CRITICAL_HIT)]).toUint() * CRITICAL_HIT
-        + (attributes[uint(IStatController.ATTRIBUTES.MELEE_DMG_FACTOR)]).toUint() * DMG_FACTOR
-        + (attributes[uint(IStatController.ATTRIBUTES.FIRE_DMG_FACTOR)]).toUint() * DMG_FACTOR
-        + (attributes[uint(IStatController.ATTRIBUTES.COLD_DMG_FACTOR)]).toUint() * DMG_FACTOR
-        + (attributes[uint(IStatController.ATTRIBUTES.LIGHTNING_DMG_FACTOR)]).toUint() * DMG_FACTOR;
-    }
-    {
-      result +=
-        (attributes[uint(IStatController.ATTRIBUTES.AR_FACTOR)]).toUint() * AR_FACTOR
-        + (attributes[uint(IStatController.ATTRIBUTES.LIFE_STOLEN_PER_HIT)]).toUint() * LIFE_STOLEN_PER_HIT
-        + (attributes[uint(IStatController.ATTRIBUTES.MANA_AFTER_KILL)]).toUint() * MANA_AFTER_KILL
-        + (attributes[uint(IStatController.ATTRIBUTES.DAMAGE_REDUCTION)]).toUint() * DAMAGE_REDUCTION
-        + (attributes[uint(IStatController.ATTRIBUTES.REFLECT_DAMAGE_MELEE)]).toUint() * REFLECT_DAMAGE
-        + (attributes[uint(IStatController.ATTRIBUTES.REFLECT_DAMAGE_MAGIC)]).toUint() * REFLECT_DAMAGE
-        + (attributes[uint(IStatController.ATTRIBUTES.RESIST_TO_STATUSES)]).toUint() * RESIST_TO_STATUSES;
+
+    if (! isForReinforcement) {
+      {
+        result +=
+          (attributes[uint(IStatController.ATTRIBUTES.LIFE)]).toUint() * LIFE
+          + (attributes[uint(IStatController.ATTRIBUTES.MANA)]).toUint() * MANA;
+      }
+      {
+        result +=
+          (attributes[uint(IStatController.ATTRIBUTES.DMG_AGAINST_HUMAN)]).toUint() * RACE_SPECIFIC
+          + (attributes[uint(IStatController.ATTRIBUTES.DMG_AGAINST_UNDEAD)]).toUint() * RACE_SPECIFIC
+          + (attributes[uint(IStatController.ATTRIBUTES.DMG_AGAINST_DAEMON)]).toUint() * RACE_SPECIFIC
+          + (attributes[uint(IStatController.ATTRIBUTES.DMG_AGAINST_BEAST)]).toUint() * RACE_SPECIFIC
+          + (attributes[uint(IStatController.ATTRIBUTES.DEF_AGAINST_HUMAN)]).toUint() * RACE_SPECIFIC
+          + (attributes[uint(IStatController.ATTRIBUTES.DEF_AGAINST_UNDEAD)]).toUint() * RACE_SPECIFIC
+          + (attributes[uint(IStatController.ATTRIBUTES.DEF_AGAINST_DAEMON)]).toUint() * RACE_SPECIFIC
+          + (attributes[uint(IStatController.ATTRIBUTES.DEF_AGAINST_BEAST)]).toUint() * RACE_SPECIFIC;
+      }
+      {
+        result +=
+          (attributes[uint(IStatController.ATTRIBUTES.STUN)]).toUint() * STATUSES
+          + (attributes[uint(IStatController.ATTRIBUTES.BURN)]).toUint() * STATUSES
+          + (attributes[uint(IStatController.ATTRIBUTES.FREEZE)]).toUint() * STATUSES
+          + (attributes[uint(IStatController.ATTRIBUTES.CONFUSE)]).toUint() * STATUSES
+          + (attributes[uint(IStatController.ATTRIBUTES.CURSE)]).toUint() * STATUSES
+          + (attributes[uint(IStatController.ATTRIBUTES.POISON)]).toUint() * STATUSES;
+      }
+      {
+        result +=
+          (attributes[uint(IStatController.ATTRIBUTES.LIFE_CHANCES)]).toUint() * LIFE_CHANCES
+          + (attributes[uint(IStatController.ATTRIBUTES.MAGIC_FIND)]).toUint() * MAGIC_FIND
+          + (attributes[uint(IStatController.ATTRIBUTES.CRITICAL_HIT)]).toUint() * CRITICAL_HIT
+          + (attributes[uint(IStatController.ATTRIBUTES.MELEE_DMG_FACTOR)]).toUint() * DMG_FACTOR
+          + (attributes[uint(IStatController.ATTRIBUTES.FIRE_DMG_FACTOR)]).toUint() * DMG_FACTOR
+          + (attributes[uint(IStatController.ATTRIBUTES.COLD_DMG_FACTOR)]).toUint() * DMG_FACTOR
+          + (attributes[uint(IStatController.ATTRIBUTES.LIGHTNING_DMG_FACTOR)]).toUint() * DMG_FACTOR;
+      }
+      {
+        result +=
+          (attributes[uint(IStatController.ATTRIBUTES.AR_FACTOR)]).toUint() * AR_FACTOR
+          + (attributes[uint(IStatController.ATTRIBUTES.LIFE_STOLEN_PER_HIT)]).toUint() * LIFE_STOLEN_PER_HIT
+          + (attributes[uint(IStatController.ATTRIBUTES.MANA_AFTER_KILL)]).toUint() * MANA_AFTER_KILL
+          + (attributes[uint(IStatController.ATTRIBUTES.DAMAGE_REDUCTION)]).toUint() * DAMAGE_REDUCTION
+          + (attributes[uint(IStatController.ATTRIBUTES.REFLECT_DAMAGE_MELEE)]).toUint() * REFLECT_DAMAGE
+          + (attributes[uint(IStatController.ATTRIBUTES.REFLECT_DAMAGE_MAGIC)]).toUint() * REFLECT_DAMAGE
+          + (attributes[uint(IStatController.ATTRIBUTES.RESIST_TO_STATUSES)]).toUint() * RESIST_TO_STATUSES;
+      }
     }
     return result;
   }
 
   function itemScore(int32[] memory attributes, uint16 baseDurability) internal pure returns (uint) {
-    return attributesScore(attributes) + baseDurability * DURABILITY_SCORE;
+    return attributesScore(attributes, false) + baseDurability * DURABILITY_SCORE;
   }
 
   function heroScore(int32[] memory attributes, uint level) internal pure returns (uint) {
-    return attributesScore(attributes) + level * HERO_LEVEL_SCORE;
+    return attributesScore(attributes, true) + level * HERO_LEVEL_SCORE;
   }
 
 }

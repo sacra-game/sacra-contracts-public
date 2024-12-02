@@ -8,6 +8,7 @@ import "./StatLib.sol";
 import "./ItemLib.sol";
 import "./StringLib.sol";
 import "./FightLib.sol";
+import "./RewardsPoolLib.sol";
 import "../interfaces/IController.sol";
 import "../interfaces/IStatController.sol";
 import "../interfaces/IOracle.sol";
@@ -32,6 +33,9 @@ library MonsterLib {
   /// @notice Max value for monster rarity and monster/dungeon multiplier
   uint32 internal constant _MAX_AMPLIFIER = 1e9;
   uint private constant _TOTAL_SUPPLY_BASE = 10_000_000e18;
+
+  /// @notice Base monster multiplier for NG+. Multiplier = base multiplier * hero ng_level
+  uint internal constant _MONSTER_MULTIPLIER_NGP_BASE = uint(_MAX_AMPLIFIER);
 
   //region ------------------------ Data types
   struct AdrContext {
@@ -58,8 +62,15 @@ library MonsterLib {
 
   //region ------------------------ Main logic
 
-  function initialGeneration(IGOC.MonsterInfo storage mInfo, address heroToken, uint heroTokenId, uint iteration, uint totalSupply) internal {
-    return _initialGeneration(mInfo, heroToken, heroTokenId, iteration, _pseudoRandom, totalSupply);
+  /// @param heroNgLevel Pass type(uint8).max for !NG+
+  function initialGeneration(
+    IGOC.MonsterInfo storage mInfo,
+    address heroToken,
+    uint heroTokenId,
+    uint iteration,
+    uint8 heroNgLevel
+  ) internal {
+    return _initialGeneration(mInfo, heroToken, heroTokenId, iteration, _pseudoRandom, heroNgLevel);
   }
 
   /// @notice Fight, post fight, generate fight results
@@ -83,6 +94,7 @@ library MonsterLib {
     function(
       IItemController,
       IFightCalculator.FightCall memory,
+      address,
       function (uint) internal view returns (uint)
     ) internal returns (IFightCalculator.FightResult memory) fight_
   ) internal returns (
@@ -128,7 +140,10 @@ library MonsterLib {
       if (gen.generated) {
         delete mInfo._generatedMonsters[heroPackedId][ctx.iteration];
       }
-      adrCtx.statController.clearUsedConsumables(ctx.heroToken, ctx.heroTokenId);
+      // assume that if the hero is dead clearUsedConsumables will be called in _objectAction
+      if (isMonsterDead) {
+        adrCtx.statController.clearUsedConsumables(ctx.heroToken, ctx.heroTokenId);
+      }
     } else {
       if (gen.generated) {
         gen.hp = fInfo.monsterHp;
@@ -179,13 +194,14 @@ library MonsterLib {
 
   /// @notice Generate new {GeneratedMonster} and put it to {mInfo._generatedMonsters}
   /// @param random_ Pass _pseudoRandom here, param is required for unit tests, range [0...MAX_AMPLIFIER]
+  /// @param heroNgLevel Assume type(uint8).max for !NG+
   function _initialGeneration(
     IGOC.MonsterInfo storage mInfo,
     address heroToken,
     uint heroTokenId,
     uint iteration,
     function (uint) internal view returns (uint) random_,
-    uint totalSupply
+    uint8 heroNgLevel
   ) internal {
     IGOC.GeneratedMonster memory gen = IGOC.GeneratedMonster({
       generated: true,
@@ -200,7 +216,7 @@ library MonsterLib {
       info.attributeIds,
       info.attributeValues,
       gen.amplifier,
-      monsterMultiplier(totalSupply),
+      monsterMultiplier(heroNgLevel),
       info.experience
     );
     gen.hp = attributes[uint(IStatController.ATTRIBUTES.LIFE)];
@@ -260,6 +276,7 @@ library MonsterLib {
 
   /// @notice Get skill tokens, ensure that they are equipped on, add skill-tokens target attributes to hero attributes
   /// @param attributes Hero attributes. These values are incremented in place
+  // @param heroAttackInfo Checked attack info. Assume that all skill tokens belong either to the hero or to the helper.
   function _debuff(
     int32[] memory attributes,
     IFightCalculator.AttackInfo memory heroAttackInfo,
@@ -267,13 +284,10 @@ library MonsterLib {
   ) internal view {
     uint length = heroAttackInfo.skillTokens.length;
     for (uint i; i < length; ++i) {
-      address token = heroAttackInfo.skillTokens[i];
-      uint id = heroAttackInfo.skillTokenIds[i];
-
-      (address equippedHero, uint equippedHeroId) = context.itemController.equippedOn(token, id);
-      if (context.heroToken != equippedHero || context.heroTokenId != equippedHeroId) revert IAppErrors.NotYourDebuffItem();
-
-      (int32[] memory values, uint8[] memory ids) = context.itemController.targetAttributes(token, id);
+      (int32[] memory values, uint8[] memory ids) = context.itemController.targetAttributes(
+        heroAttackInfo.skillTokens[i],
+        heroAttackInfo.skillTokenIds[i]
+      );
 
       StatLib.attributesAdd(attributes, StatLib.valuesToFullAttributesArray(values, ids));
     }
@@ -302,7 +316,14 @@ library MonsterLib {
       fighterInfo.fighterStats.experience,
       attackInfo,
       genInfo
-    ) = _generateMonsterInfo(mInfo, rarity, monsterMultiplier(multiplierInfo.totalSupply), heroLevel, multiplierInfo.biome, random_);
+    ) = _generateMonsterInfo(
+      mInfo,
+      rarity,
+      monsterMultiplier(multiplierInfo.heroNgLevel),
+      heroLevel,
+      multiplierInfo.biome,
+      random_
+    );
 
     _debuff(fighterInfo.fighterAttributes, heroAttackInfo, adrCtx);
 
@@ -331,6 +352,7 @@ library MonsterLib {
     function(
       IItemController,
       IFightCalculator.FightCall memory,
+      address,
       function (uint) internal view returns (uint)
     ) internal returns (IFightCalculator.FightResult memory) fight_
   ) internal returns (
@@ -343,6 +365,7 @@ library MonsterLib {
     {
       IFightCalculator.AttackInfo memory heroAttackInfo = decodeAndCheckAttackInfo(
         adrCtx.itemController,
+        IHeroController(IController(adrCtx.controller).heroController()),
         ctx.data,
         adrCtx.heroToken,
         adrCtx.heroTokenId
@@ -351,7 +374,10 @@ library MonsterLib {
       // use fInfo.manaConsumed and fInfo.monsterRarity to story values temporally to avoid creation of additional vars
       (heroFightInfo, fInfo.manaConsumed) = _collectHeroFighterInfo(heroAttackInfo, adrCtx);
       (monsterFightInfo, fInfo.monsterRarity, info) = _collectMonsterFighterInfo(
-        IGOC.MultiplierInfo(ctx.biome, IERC20(ctx.controller.gameToken()).totalSupply()),
+        IGOC.MultiplierInfo({
+          biome: ctx.biome,
+          heroNgLevel: ctx.heroNgLevel
+        }),
         mInfo,
         gen,
         heroAttackInfo,
@@ -375,6 +401,7 @@ library MonsterLib {
         iteration: ctx.iteration,
         turn: gen.turnCounter
       }),
+      ctx.sender,
       random_
     );
 
@@ -399,7 +426,7 @@ library MonsterLib {
   function _generateMonsterInfo(
     IGOC.MonsterInfo storage mInfo,
     uint32 amplifier,
-    int32 dungeonMultiplier,
+    uint dungeonMultiplier,
     uint heroLevel,
     uint biome,
     function (uint) internal view returns (uint) random_
@@ -454,18 +481,31 @@ library MonsterLib {
       ItemLib.MintItemInfo({
         mintItems: genInfo.mintItems,
         mintItemsChances: genInfo.mintItemsChances,
-        biome: ctx.biome,
         amplifier: fInfo.monsterRarity,
         seed: 0,
         oracle: IOracle(ctx.controller.oracle()),
-        heroExp: fInfo.heroFightInfo.fighterStats.experience,
-        heroCurrentLvl: uint8(fInfo.heroFightInfo.fighterStats.level),
         magicFind: fInfo.heroFightInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.MAGIC_FIND)],
         destroyItems: fInfo.heroFightInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.DESTROY_ITEMS)],
-        maxItems: genInfo.maxDropItems
+        maxItems: genInfo.maxDropItems,
+        mintDropChanceDelta: ctx.objectSubType == uint8(IGOC.ObjectSubType.BOSS_3) ? 0 : // do not reduce drop for bosses at all
+        StatLib.mintDropChanceDelta(
+          fInfo.heroFightInfo.fighterStats.experience,
+          uint8(fInfo.heroFightInfo.fighterStats.level),
+          ctx.biome
+        ),
+        mintDropChanceNgLevelMultiplier: _getMintDropChanceNgLevelMultiplier(ctx)
       }),
       nextPrng_
     );
+  }
+
+  /// @return drop chance multiplier, decimals 1e18; result value is guaranteed to be <= 1e18
+  function _getMintDropChanceNgLevelMultiplier(IGOC.ActionContext memory ctx) internal view returns (uint) {
+    return Math.min(1e18, RewardsPoolLib.dropChancePercent(
+      IDungeonFactory(ctx.controller.dungeonFactory()).maxAvailableBiome(),
+      IHeroController(ctx.controller.heroController()).maxOpenedNgLevel(),
+      ctx.heroNgLevel
+    ));
   }
 
   //endregion ------------------------ Internal calculations
@@ -532,7 +572,15 @@ library MonsterLib {
     return result;
   }
 
-  function decodeAndCheckAttackInfo(IItemController ic, bytes memory data, address heroToken, uint heroId) internal view returns (IFightCalculator.AttackInfo memory) {
+  /// @notice Decode attack info. Ensure that attack token belongs to the hero.
+  /// Ensure that skill tokens belong to the hero OR to the current helper (SIP-001)
+  function decodeAndCheckAttackInfo(
+    IItemController ic,
+    IHeroController heroController,
+    bytes memory data,
+    address heroToken,
+    uint heroId
+  ) internal view returns (IFightCalculator.AttackInfo memory) {
     (IFightCalculator.AttackInfo memory attackInfo) = abi.decode(data, (IFightCalculator.AttackInfo));
 
     if (uint(attackInfo.attackType) == 0) revert IAppErrors.UnknownAttackType(uint(attackInfo.attackType));
@@ -542,38 +590,34 @@ library MonsterLib {
       if (heroToken != h || hId != heroId) revert IAppErrors.NotYourAttackItem();
     }
 
+    (address helperHeroToken, uint helperHeroId) = heroController.heroReinforcementHelp(heroToken, heroId);
     for (uint i; i < attackInfo.skillTokens.length; ++i) {
       (address h, uint hId) = ic.equippedOn(attackInfo.skillTokens[i], attackInfo.skillTokenIds[i]);
-      if (heroToken != h || hId != heroId) revert IAppErrors.NotYourBuffItem();
+      if (
+        (heroToken != h || hId != heroId)
+        && ((helperHeroToken == address(0)) || (helperHeroToken != h || helperHeroId != hId))
+      ) revert IAppErrors.NotYourBuffItem();
     }
 
     return attackInfo;
   }
 
-  /// @dev MAX_AMPLIFIER value will means +100% to all attributes
-  ///      slowly increase monsters power from 10% of the target supply
-  function monsterMultiplier(uint totalSupply) internal pure returns (int32) {
-    if(totalSupply < _TOTAL_SUPPLY_BASE / 10) {
-      return 0;
-    }
-
-    return int32(int((uint(_MAX_AMPLIFIER) * totalSupply) / _TOTAL_SUPPLY_BASE));
+  /// @dev Monsters power is increased on 100% with each increment of hero NG_LEVEL
+  function monsterMultiplier(uint8 heroNgLevel) internal pure returns (uint) {
+    return _MONSTER_MULTIPLIER_NGP_BASE * uint(heroNgLevel);
   }
 
-  function getMonsterMultiplier(IController controller) internal view returns (int32) {
-    uint totalSupply = IERC20(controller.gameToken()).totalSupply();
-    return monsterMultiplier(totalSupply);
-  }
-
-  function amplifyMonsterAttribute(int32 value, uint32 amplifier, int32 dungeonMultiplier) internal pure returns (int32) {
+  function amplifyMonsterAttribute(int32 value, uint32 amplifier, uint dungeonMultiplier) internal pure returns (int32) {
     if (value == 0) {
       return 0;
     }
-    return value +
-      int32(
-        (int(value) * int(uint(amplifier)) / int(uint(_MAX_AMPLIFIER)))
-        + (int(value) * int(dungeonMultiplier) / int(uint(_MAX_AMPLIFIER)))
-      );
+
+    int destValue = int(value)
+      + (int(value) * int(uint(amplifier)) / int(uint(_MAX_AMPLIFIER)))
+      + (int(value) * int(dungeonMultiplier) / int(uint(_MAX_AMPLIFIER)));
+    if (destValue > type(int32).max || destValue < type(int32).min) revert IAppErrors.IntValueOutOfRange(destValue);
+
+    return int32(destValue);
   }
 
   /// @dev A wrapper around {CalcLib.pseudoRandom} to pass it as param (to be able to implement unit tests}
@@ -588,7 +632,7 @@ library MonsterLib {
     uint8[] memory ids,
     int32[] memory values,
     uint32 amplifier,
-    int32 dungeonMultiplier,
+    uint dungeonMultiplier,
     uint32 baseExperience
   ) internal pure returns (
     int32[] memory attributes,
@@ -601,7 +645,7 @@ library MonsterLib {
     for (uint i; i < ids.length; ++i) {
       attributes[ids[i]] = amplifyMonsterAttribute(values[i], amplifier, dungeonMultiplier);
     }
-    experience = uint32(amplifyMonsterAttribute(int32(baseExperience), amplifier, dungeonMultiplier));
+    experience = uint32(amplifyMonsterAttribute(int32(baseExperience), amplifier, 0));
   }
 
   function _calcDmg(int32 heroLifeBefore, int32 heroLifeAfter) internal pure returns (int32 damage) {

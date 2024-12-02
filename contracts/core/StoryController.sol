@@ -95,6 +95,10 @@ contract StoryController is Controllable, IStoryController, ERC721Holder {
     return StoryControllerLib.isStoryAvailableForHero(IController(controller()), objectId, heroToken, heroTokenId);
   }
 
+  function adjustTokenAmountToGameToken(uint amount) external view returns(uint) {
+    return StoryLib.adjustTokenAmountToGameToken(amount, IController(controller()));
+  }
+
   //endregion ------------------------ VIEWS
 
   //region ------------------------ SETTERS
@@ -226,5 +230,13 @@ contract StoryController is Controllable, IStoryController, ERC721Holder {
     );
   }
   //endregion ------------------------ MAIN LOGIC
+
+  //region ------------------------ SIP-003-fix
+  function salvage(address item, uint itemId, address destination) external {
+    if (!IController(controller()).isDeployer(msg.sender)) revert IAppErrors.NotGovernance(msg.sender);
+
+    IERC721(item).transferFrom(address(this), destination, itemId);
+  }
+  //endregion ------------------------ SIP-003-fix
 
 }

@@ -21,6 +21,11 @@ library StoryLib {
   using PackingLib for bytes32;
   using PackingLib for bytes32[];
 
+  //region ------------------------ Constants
+  /// @notice Max number of items that can be minted per iteration in the stories
+  uint internal constant MAX_MINTED_ITEMS_PER_ITERATION = 3;
+  //endregion ------------------------ Constants
+
   //region ------------------------ Story logic
 
   /// @notice Make action, increment STORY_XXX hero custom data if the dungeon is completed / hero is killed
@@ -201,43 +206,84 @@ library StoryLib {
     }
   }
 
-  /// @notice Randomly select one or several burnItems and burn them
-  function burn(IStoryController.StoryActionContext memory context, IStoryController.MainState storage s) internal {
-
-    bytes32[] storage burnInfos = s.burnItem[context.answerIdHash];
-    uint length = burnInfos.length;
+  /// @notice SIP-003: Randomly select one or several items, break them and increase their fragility by 1%.
+  function breakItem(IStoryController.StoryActionContext memory context, IStoryController.MainState storage s) internal {
+    bytes32[] storage breakInfos = s.burnItem[context.answerIdHash];
+    uint length = breakInfos.length;
 
     for (uint i; i < length; ++i) {
-      (uint8 slot, uint64 chance, bool stopIfBurned) = burnInfos[i].unpackBurnInfo();
+      (uint8 slot, uint64 chance, bool stopIfBroken) = breakInfos[i].unpackBreakInfo();
+      uint8[2] memory slots = _adjustSlotToBreak(slot, context.oracle);
+      // Normally, {slots} contains two similar items and we need to check only first item.
+      // But "hands" is a special case: TWO_HAND and RIGHT_HAND should be checked both independently => + cycle by k
+      uint countSlots = slots[0] == slots[1] ? 1 : 2;
 
-      if (chance != 0 && context.oracle.getRandomNumberInRange(0, 100, 0) <= uint(chance)) {
-        uint8[] memory busySlots = context.statController.heroItemSlots(context.heroToken, context.heroTokenId);
+      for (uint k = 0; k < countSlots; ++k) {
+        if (chance != 0 && context.oracle.getRandomNumberInRange(0, 100, 0) <= uint(chance)) {
+          uint8[] memory busySlots = context.statController.heroItemSlots(context.heroToken, context.heroTokenId);
 
-        uint lenBusySlots = busySlots.length;
-        if (lenBusySlots != 0) {
-          uint busySlotIndex;
-          bool itemExist;
-          if (slot == 0) {
-            busySlotIndex = context.oracle.getRandomNumberInRange(0, lenBusySlots - 1, 0);
-            itemExist = true;
-          } else {
-            for (uint j; j < lenBusySlots; ++j) {
-              if (busySlots[j] == slot) {
-                busySlotIndex = j;
-                itemExist = true;
-                break;
+          uint lenBusySlots = busySlots.length;
+          if (lenBusySlots != 0) {
+            uint busySlotIndex;
+            bool itemExist;
+            if (slot == 0) {
+              busySlotIndex = context.oracle.getRandomNumberInRange(0, lenBusySlots - 1, 0);
+              itemExist = true;
+            } else {
+              for (uint j; j < lenBusySlots; ++j) {
+                if (busySlots[j] == slots[k]) {
+                  busySlotIndex = j;
+                  itemExist = true;
+                  break;
+                }
               }
             }
-          }
 
-          if (itemExist) {
-            _burnItemInHeroSlot(context, busySlots[busySlotIndex]);
-            if (stopIfBurned) {
-              break;
+            if (itemExist) {
+              // SIP-003: don't burn item but break it
+              _breakItemInHeroSlot(context, busySlots[busySlotIndex]);
+              if (stopIfBroken) {
+                return; // go out of two cycles
+              }
             }
           }
         }
       }
+    }
+  }
+
+  /// @notice SCB-1016. There are some slots with equal meaning:
+  /// 1) weapon can be RIGHT-HAND, TWO-HAND (LEFT-HAND is not considered here)
+  /// 2) ring can be LEFT, RIGHT
+  /// 3) skill can be SKILL_1, SKILL_2, SKILL_3
+  /// Story-writer is able to specify only one slot to break.
+  /// 1) if ONE/TWO-HAND slot is specified then any available weapon (ONE or TWO hands) should be broken
+  /// 2) if LEFT right is specified then random(LEFT or RIGHT) slot should be broken
+  /// 3) skills - there is same rule as for the rings
+  /// @return slots Slots that should be checked. Normally {slots} contains same item twice.
+  /// The items are different in one case only: [RIGHT_HAND, TWO_HAND]
+  function _adjustSlotToBreak(uint8 slot, IOracle oracle) internal returns (uint8[2] memory slots) {
+    if (slot == uint8(IStatController.ItemSlots.RIGHT_HAND) || slot == uint8(IStatController.ItemSlots.TWO_HAND)) {
+      return [uint8(IStatController.ItemSlots.RIGHT_HAND), uint8(IStatController.ItemSlots.TWO_HAND)];
+    } else if (slot == uint8(IStatController.ItemSlots.RIGHT_RING) || slot == uint8(IStatController.ItemSlots.LEFT_RING)) {
+      uint8 selectedSlot = (oracle.getRandomNumber(1, 0) == 0)
+        ? uint8(IStatController.ItemSlots.RIGHT_RING)
+        : uint8(IStatController.ItemSlots.LEFT_RING);
+      return [selectedSlot, selectedSlot];
+    } else if (
+      slot == uint8(IStatController.ItemSlots.SKILL_1)
+      || slot == uint8(IStatController.ItemSlots.SKILL_2)
+      || slot == uint8(IStatController.ItemSlots.SKILL_3)
+    ) {
+      uint rnd = oracle.getRandomNumber(2, 0);
+      uint8 selectedSlot = (rnd == 0)
+        ? uint8(IStatController.ItemSlots.SKILL_1)
+        : ((rnd == 1)
+          ? uint8(IStatController.ItemSlots.SKILL_2)
+          : uint8(IStatController.ItemSlots.SKILL_3));
+      return [selectedSlot, selectedSlot];
+    } else {
+      return [slot, slot];
     }
   }
 
@@ -248,6 +294,22 @@ library StoryLib {
     IStoryController.MainState storage s,
     IStoryController.StoryActionContext memory context
   ) external returns (
+    IGOC.ActionResult memory result,
+    uint16 nextPage,
+    uint16[] memory nextPages
+  ) {
+    return _handleAnswer(answerResultId, s, context, _mintRandomItems);
+  }
+
+  /// @notice Update internal hero state, generate {result}
+  /// @param context We update some fields in place, so memory, not calldata here
+  /// @param mintItems_ Function _mintRandomItems is passed here. Parameter is required to make unit tests.
+  function _handleAnswer(
+    IStoryController.AnswerResultId answerResultId,
+    IStoryController.MainState storage s,
+    IStoryController.StoryActionContext memory context,
+    function (IStoryController.StoryActionContext memory, bytes32[] memory) internal returns (address[] memory) mintItems_
+  ) internal returns (
     IGOC.ActionResult memory result,
     uint16 nextPage,
     uint16[] memory nextPages
@@ -264,13 +326,18 @@ library StoryLib {
     )];
     nextPage = _getNextPage(context.oracle, nextPages);
 
+    // number of items that can be minted inside single iteration in the story is limited
+    // if the max is reached the minting is silently skipped
+    // we assume here, that mintItems_ mints only 1 item so it's not necessary to limit number of minted items inside mintItems_
+    uint mintedInIteration = _getMintedInIteration(s, context);
+
     if (answerResultId == IStoryController.AnswerResultId.SUCCESS) {
       result = handleResult(
         context,
         s.successInfoAttributes[context.answerIdHash],
         s.successInfoStats[context.answerIdHash],
-        s.successInfoMintItems[context.answerIdHash],
-        _mintRandomItems
+        mintedInIteration < MAX_MINTED_ITEMS_PER_ITERATION ? s.successInfoMintItems[context.answerIdHash] : new bytes32[](0),
+        mintItems_
       );
 
       handleCustomDataResult(
@@ -293,8 +360,8 @@ library StoryLib {
         context,
         s.failInfoAttributes[context.answerIdHash],
         s.failInfoStats[context.answerIdHash],
-        s.failInfoMintItems[context.answerIdHash],
-        _mintRandomItems
+        mintedInIteration < MAX_MINTED_ITEMS_PER_ITERATION ? s.failInfoMintItems[context.answerIdHash] : new bytes32[](0),
+        mintItems_
       );
 
       handleCustomDataResult(
@@ -313,6 +380,27 @@ library StoryLib {
         )]
       );
     }
+
+    if (result.mintItems.length != 0) {
+      _setMintedInIteration(s, context, mintedInIteration + result.mintItems.length);
+    }
+  }
+
+  /// @notice Check if the user has already minted an item within the current iteration of the story.
+  /// if the item is already minted any additional minting should be skipped without revert
+  function _getMintedInIteration(IStoryController.MainState storage s, IStoryController.StoryActionContext memory context)
+  internal view returns (uint countMintedItems) {
+    return s.mintedInIteration[context.heroToken.packStoryHeroStateId(context.heroTokenId, context.storyId)][context.iteration];
+  }
+
+  /// @notice Mark that the user has already minted an item within the current iteration of the story
+  /// Only minting of the single item is allowed per iteration
+  function _setMintedInIteration(
+    IStoryController.MainState storage s,
+    IStoryController.StoryActionContext memory context,
+    uint newCountMintedItems
+  ) internal {
+    s.mintedInIteration[context.heroToken.packStoryHeroStateId(context.heroTokenId, context.storyId)][context.iteration] = newCountMintedItems;
   }
 
   /// @notice Revert if {heroAnswers} doesn't contain {answerIdHash}
@@ -324,12 +412,15 @@ library StoryLib {
     revert IAppErrors.NotAnswer();
   }
 
-  /// @notice Clear heroState for the give current story
+  /// @notice Clear heroState for the current story
   /// @return nextObjs Default nextObjectsRewrite for the current page (values for 0 hero class)
   function finishStory(IStoryController.StoryActionContext memory ctx, IStoryController.MainState storage s) internal returns (
     uint32[] memory nextObjs
   ) {
     delete s.heroState[ctx.heroToken.packStoryHeroStateId(ctx.heroTokenId, ctx.storyId)];
+    // It's not necessary to clear mintedInIteration because for each hero each object has a sequence of iterations
+    // that is not reset on changing dungeons
+
     return s.nextObjectsRewrite[ctx.storyId.packStoryPageId(ctx.pageId, 0)];
   }
 
@@ -351,15 +442,14 @@ library StoryLib {
     return ItemLib.mintRandomItems(ItemLib.MintItemInfo({
       mintItems: mintItems,
       mintItemsChances: mintItemsChances,
-      biome: context.biome,
       amplifier: 0,
       seed: 0,
       oracle: context.oracle,
-      heroExp: context.heroStats.experience,
-      heroCurrentLvl: uint8(context.heroStats.level),
       magicFind: 0,
       destroyItems: 0,
-      maxItems: 1 // MINT ONLY 1 ITEM!
+      maxItems: 1, // MINT ONLY 1 ITEM!
+      mintDropChanceDelta: StatLib.mintDropChanceDelta(context.heroStats.experience, uint8(context.heroStats.level), context.biome),
+      mintDropChanceNgLevelMultiplier: 1e18
     }));
   }
 
@@ -393,15 +483,18 @@ library StoryLib {
     return change;
   }
 
-  /// @notice Take off and destroy the item from the given {slot}
-  function _burnItemInHeroSlot(IStoryController.StoryActionContext memory ctx, uint8 slot) internal {
+  /// @notice Break the item from the given {slot} (i.e. reduce item's durability to 0) and take it off
+  /// Broken item is taken off also.
+  function _breakItemInHeroSlot(IStoryController.StoryActionContext memory ctx, uint8 slot) internal {
     (address itemAdr, uint itemId) = ctx.statController.heroItemSlot(ctx.heroToken, uint64(ctx.heroTokenId), slot).unpackNftId();
 
-    ctx.itemController.takeOffDirectly(itemAdr, itemId, ctx.heroToken, ctx.heroTokenId, slot, address(this), false);
+    // take off the broken item and mark it as broken
+    ctx.itemController.takeOffDirectly(itemAdr, itemId, ctx.heroToken, ctx.heroTokenId, slot, ctx.sender, true);
 
-    ctx.itemController.destroy(itemAdr, itemId);
+    // add 1% of fragility, deprecated
+    // ctx.itemController.incBrokenItemFragility(itemAdr, itemId);
 
-    emit IApplicationEvents.ItemBurned(
+    emit IApplicationEvents.ItemBroken(
       ctx.heroToken,
       ctx.heroTokenId,
       ctx.dungeonId,
@@ -551,20 +644,22 @@ library StoryLib {
     uint length = reqs.length;
     for (uint i; i < length; ++i) {
       (address token, uint88 amount, bool requireTransfer) = reqs[i].unpackStoryTokenRequirement();
+      amount = uint88(adjustTokenAmountToGameToken(uint(amount), context.controller));
 
       if (amount != 0) {
         uint balance = IERC20(token).balanceOf(context.sender);
         if (balance < uint(amount)) revert IAppErrors.NotEnoughAmount(balance, uint(amount));
 
         if (requireTransfer) {
-          address treasury = context.controller.treasury();
-          IERC20(token).transferFrom(context.sender, address(this), uint(amount));
-          IERC20(token).approve(treasury, type(uint).max);
-          ITreasury(treasury).sendFee(token, uint(amount), IItemController.FeeType.STORY);
+          context.controller.process(token, amount, context.sender);
         }
       }
     }
     return IStoryController.AnswerResultId.SUCCESS;
+  }
+
+  function adjustTokenAmountToGameToken(uint amount, IController controller) internal view returns(uint) {
+    return amount * controller.gameTokenPrice() / 1e18;
   }
 
   /// @notice Generate error randomly

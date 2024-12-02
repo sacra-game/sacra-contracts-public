@@ -38,34 +38,6 @@ library TreasuryLib {
     IERC20(token).transfer(dungeon, amount);
     emit IApplicationEvents.AssetsSentToDungeon(dungeon, token, amount);
   }
-
-  /// @dev Assume approve. Move fee to treasury and governance from msg.sender.
-  ///      Anyone can call
-  function sendFee(IController controller, address token, uint amount, IItemController.FeeType feeType) internal {
-
-    uint dividerGovFee = 100;
-    if (feeType == IItemController.FeeType.REPAIR) {
-      dividerGovFee = REPAIR_GOV_FEE;
-    } else if (feeType == IItemController.FeeType.AUGMENT) {
-      dividerGovFee = AUGMENT_GOV_FEE;
-    }
-
-    uint toGov = amount * dividerGovFee / 100;
-    uint toTreasury = amount - toGov;
-    if (toTreasury != 0) {
-      address gameToken = controller.gameToken();
-      if (gameToken == token) {
-        IERC20(token).transferFrom(msg.sender, address(this), toTreasury);
-        // for game token always burn treasury part
-        IGameToken(gameToken).burn(toTreasury);
-      } else {
-        IERC20(token).transferFrom(msg.sender, address(this), toTreasury);
-      }
-    }
-    if (toGov != 0) {
-      IERC20(token).transferFrom(msg.sender, address(controller), toGov);
-    }
-  }
   //endregion ------------------------ ACTIONS
 
 }

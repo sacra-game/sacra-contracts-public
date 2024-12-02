@@ -32,4 +32,13 @@ interface IController {
 
   function onPause() external view returns (bool);
 
+  function userController() external view returns (address);
+
+  function guildController() external view returns (address);
+
+  function rewardsPool() external view returns (address);
+
+  function gameTokenPrice() external view returns (uint);
+
+  function process(address token, uint amount, address from) external;
 }

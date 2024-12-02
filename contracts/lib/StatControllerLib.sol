@@ -20,6 +20,7 @@ library StatControllerLib {
   using CalcLib for int;
   using CalcLib for int32;
   using EnumerableSet for EnumerableSet.AddressSet;
+  using EnumerableMap for EnumerableMap.Bytes32ToUintMap;
   using PackingLib for bytes32[];
   using PackingLib for bytes32;
   using PackingLib for int32;
@@ -31,28 +32,45 @@ library StatControllerLib {
 
   int32 public constant LEVEL_UP_SUM = 5;
   bytes32 public constant KARMA_HASH = bytes32("KARMA");
+  uint internal constant DEFAULT_KARMA_VALUE = 1000;
+
+  /// @notice Virtual data, value is not stored to hero custom data, heroClass is taken from heroController by the index
   bytes32 public constant HERO_CLASS_HASH = bytes32("HERO_CLASS");
+
+  /// @notice Custom data of the hero. Value is incremented on every life-chance lost
+  bytes32 public constant DEATH_COUNT_HASH = bytes32("DEATH_COUNT");
   //endregion ------------------------ Constants
 
   //region ------------------------ RESTRICTIONS
 
-  function onlyRegisteredContract(IController controller_) internal view {
+  function onlyRegisteredContract(IController controller_) internal view returns (IHeroController) {
+    // using of ControllerContextLib.ControllerContext increases size of the contract on 0.5 kb
     address sender = msg.sender;
+    address heroController = controller_.heroController();
     if (
-      controller_.heroController() != sender
+      heroController != sender
       && controller_.itemController() != sender
       && controller_.dungeonFactory() != sender
       && controller_.storyController() != sender
       && controller_.gameObjectController() != sender
+      // todo after pvp release: && controller_.pvpController() != sender
     ) revert IAppErrors.ErrorForbidden(sender);
+
+    return IHeroController(heroController);
   }
 
   function onlyItemController(IController controller_) internal view {
     if (controller_.itemController() != msg.sender) revert IAppErrors.ErrorNotItemController(msg.sender);
   }
 
-  function onlyHeroController(IController controller_) internal view {
-    if (controller_.heroController() != msg.sender) revert IAppErrors.ErrorNotHeroController(msg.sender);
+  function onlyHeroController(IController controller_) internal view returns (IHeroController) {
+    address heroController = controller_.heroController();
+    if (heroController != msg.sender) revert IAppErrors.ErrorNotHeroController(msg.sender);
+    return IHeroController(heroController);
+  }
+
+  function onlyDeployer(IController controller) internal view {
+    if (!controller.isDeployer(msg.sender)) revert IAppErrors.ErrorNotDeployer(msg.sender);
   }
   //endregion ------------------------ RESTRICTIONS
 
@@ -97,8 +115,34 @@ library StatControllerLib {
     });
   }
 
-  function heroCustomData(IStatController.MainState storage s, address token, uint tokenId, bytes32 index) internal view returns (uint) {
-    return s.heroCustomData[PackingLib.packNftId(token, tokenId)][index];
+  function heroCustomData(IHeroController hc, address hero, uint heroId, bytes32 index) internal view returns (uint) {
+    return heroCustomDataOnNgLevel(hc, hero, heroId, index, hc.getHeroInfo(hero, heroId).ngLevel);
+  }
+
+  function heroCustomDataOnNgLevel(IHeroController hc, address hero, uint heroId, bytes32 index, uint8 ngLevel) internal view returns (uint) {
+    if (index == HERO_CLASS_HASH) {
+      return hc.heroClass(hero);
+    } else {
+      (, uint value) = _S().heroCustomDataV2[PackingLib.packNftIdWithValue(hero, heroId, ngLevel)].tryGet(index);
+
+      if (index == KARMA_HASH && value == 0) {
+        return DEFAULT_KARMA_VALUE;
+      }
+
+      return value;
+    }
+  }
+
+
+  function getAllHeroCustomData(IHeroController hc, address hero, uint heroId) internal view returns (bytes32[] memory keys, uint[] memory values) {
+    // Result doesn't include HERO_CLASS_HASH
+    EnumerableMap.Bytes32ToUintMap storage map = _S().heroCustomDataV2[PackingLib.packNftIdWithValue(hero, heroId, hc.getHeroInfo(hero, heroId).ngLevel)];
+    uint length = map.length();
+    keys = new bytes32[](length);
+    values = new uint[](length);
+    for (uint i; i < length; ++i) {
+      (keys[i], values[i]) = map.at(i);
+    }
   }
 
   function globalCustomData(IStatController.MainState storage s, bytes32 index) internal view returns (uint) {
@@ -161,8 +205,8 @@ library StatControllerLib {
   function buffHero(
     IStatController.MainState storage s,
     IController c,
-    IStatController.BuffInfo memory info
-  ) internal view returns (
+    IStatController.BuffInfo calldata info
+  ) external view returns (
     int32[] memory dest,
     int32 manaSum
   ) {
@@ -180,13 +224,13 @@ library StatControllerLib {
 
       // we should ignore the same skills
       bool used;
-      for(uint j; j < i; ++j) {
+      for (uint j; j < i; ++j) {
         if (usedTokens[j] == info.buffTokens[i]) {
           used = true;
           break;
         }
       }
-      if(used) {
+      if (used) {
         continue;
       }
 
@@ -204,11 +248,11 @@ library StatControllerLib {
 
     return (
       StatLib.updateCoreDependAttributesInMemory(
-        totalAttributes,
-        buffAttributes,
-        IHeroController(c.heroController()).heroClass(info.heroToken),
-        info.heroLevel
-      ),
+      totalAttributes,
+      buffAttributes,
+      IHeroController(c.heroController()).heroClass(info.heroToken),
+      info.heroLevel
+    ),
       manaSum
     );
   }
@@ -263,6 +307,93 @@ library StatControllerLib {
 
   //region ------------------------ ACTIONS
 
+  /// @param heroClass Assume that heroController passes correct value of the heroClass for the given hero
+  /// Also assume that the hero exists and alive
+  function reborn(IController controller, address hero, uint heroId, uint heroClass) external {
+    IStatController.MainState storage s = _S();
+    bytes32 heroPackedId = PackingLib.packNftId(hero, heroId);
+
+    IHeroController heroController = StatControllerLib.onlyHeroController(controller);
+    if (_S().heroBusySlots[heroPackedId] != 0) revert IAppErrors.EquippedItemsExist();
+
+    uint32 lifeChances = heroStats(s, hero, heroId).lifeChances;
+
+    // -------------------------- clear
+    delete s.heroTotalAttributes[heroPackedId];
+    delete s.heroTemporallyAttributes[heroPackedId];
+    delete s.heroBonusAttributes[heroPackedId];
+
+    // -------------------------- init from zero
+    uint32[] memory baseStats = _initCoreAndAttributes(s, heroPackedId, heroClass);
+    _changeChangeableStats(
+      s,
+      heroPackedId,
+      1, // level is set to 1
+      0, // experience is set to 0
+      baseStats[0], // life is restored
+      baseStats[1], // mana is restored
+      lifeChances// life chances are not changed
+    );
+
+    // custom data is NOT cleared on reborn, new custom data map is used on each new NG_LVL
+    _prepareHeroCustomDataForNextNgLevel(heroController, hero, heroId);
+  }
+
+  function _prepareHeroCustomDataForNextNgLevel(IHeroController heroController, address hero, uint heroId) internal {
+    // assume here, that statController.reborn is called AFTER incrementing of NG_LVL, current NG_LVL has "new" value
+    uint8 newNgLevel = heroController.getHeroInfo(hero, heroId).ngLevel;
+    if (newNgLevel == 0) revert IAppErrors.ZeroValueNotAllowed(); // edge case
+    uint8 prevNgLevel = newNgLevel - 1;
+
+    // copy value of DEATH_COUNT from current ng-level to next ng-level
+    (bool exist, uint value) = _S().heroCustomDataV2[PackingLib.packNftIdWithValue(hero, heroId, prevNgLevel)].tryGet(DEATH_COUNT_HASH);
+    if (exist && value != 0) {
+      _S().heroCustomDataV2[PackingLib.packNftIdWithValue(hero, heroId, newNgLevel)].set(DEATH_COUNT_HASH, value);
+      emit IApplicationEvents.HeroCustomDataChangedNg(hero, heroId, DEATH_COUNT_HASH, value, newNgLevel);
+    }
+
+    // leave KARMA equal to 0 on next ng-level, getter returns default karma in this case
+    emit IApplicationEvents.HeroCustomDataChangedNg(hero, heroId, KARMA_HASH, DEFAULT_KARMA_VALUE, newNgLevel);
+  }
+
+  /// @notice Keep stories, monsters, DEATH_COUNT_HASH and HERO_CLASS_HASH; remove all other custom data
+  function _removeAllHeroCustomData(IHeroController hc, address hero, uint heroId) internal {
+    EnumerableMap.Bytes32ToUintMap storage data = _S().heroCustomDataV2[PackingLib.packNftIdWithValue(hero, heroId, hc.getHeroInfo(hero, heroId).ngLevel)];
+    uint length = data.length();
+    bytes32[] memory keysToRemove = new bytes32[](length);
+    bytes32 monsterPrefix = bytes32(abi.encodePacked("MONSTER_")); // 8 bytes
+    bytes32 storyPrefix = bytes32(abi.encodePacked("STORY_")); // 6 bytes
+
+    for (uint i; i < length; ++i) {
+      (bytes32 key,) = data.at(i);
+      if (key == DEATH_COUNT_HASH || key == HERO_CLASS_HASH) continue;
+
+      bool isNotMonster;
+      bool isNotStory;
+      for (uint j; j < 8; j++) {
+        if (!isNotMonster && key[j] != monsterPrefix[j]) {
+          isNotMonster = true;
+        }
+        if (!isNotStory && j < 6 && key[j] != storyPrefix[j]) {
+          isNotStory = true;
+        }
+        if (isNotMonster && isNotStory) break;
+      }
+
+      if (isNotMonster && isNotStory) {
+        keysToRemove[i] = key;
+      }
+    }
+
+    for (uint i; i < length; ++i) {
+      if (keysToRemove[i] != bytes32(0)) {
+        data.remove(keysToRemove[i]);
+      }
+    }
+
+    emit IApplicationEvents.HeroCustomDataCleared(hero, heroId);
+  }
+
   /// @notice Initialize new hero, set up custom data, core data, changeable stats by default value
   /// @param heroClass [1..6], see StatLib.initHeroXXX
   function initNewHero(
@@ -271,16 +402,14 @@ library StatControllerLib {
     address heroToken,
     uint heroTokenId,
     uint heroClass
-  ) internal {
-    StatControllerLib.onlyHeroController(c);
+  ) external {
+    IHeroController heroController = StatControllerLib.onlyHeroController(c);
 
     bytes32 heroPackedId = PackingLib.packNftId(heroToken, heroTokenId);
-    _initNewHeroCore(s, heroPackedId, heroClass);
+    uint32[] memory baseStats = _initCoreAndAttributes(s, heroPackedId, heroClass);
 
-    bytes32[] storage totalAttributes = s.heroTotalAttributes[heroPackedId];
-    uint32[] memory baseStats = StatLib.initAttributes(totalAttributes, heroClass, 1, heroClass.initialHero().core);
+    _changeChangeableStats(s, heroPackedId, 1, 0, baseStats[0], baseStats[1], baseStats[2]);
 
-    _initChangeableStats(s, heroPackedId, baseStats);
     emit IApplicationEvents.NewHeroInited(heroToken, heroTokenId, IStatController.ChangeableStats({
       level: 1,
       experience: 0,
@@ -290,16 +419,44 @@ library StatControllerLib {
     }));
 
     // --- init predefined custom hero data
+    _initNewHeroCustomData(s, heroController, heroToken, heroTokenId);
+  }
 
-    mapping(bytes32 => uint) storage customData = s.heroCustomData[heroPackedId];
+  /// @dev Reset custom hero data if something went wrong
+  function resetHeroCustomData(
+    IStatController.MainState storage s,
+    IController c,
+    address heroToken,
+    uint heroTokenId
+  ) external {
+    StatControllerLib.onlyDeployer(c);
+    _removeAllHeroCustomData(IHeroController(c.heroController()), heroToken, heroTokenId);
+    _initNewHeroCustomData(s, IHeroController(c.heroController()), heroToken, heroTokenId);
+  }
+
+  function _initNewHeroCustomData(IStatController.MainState storage s, IHeroController heroController, address hero, uint heroId) internal {
+    uint8 ngLevel = heroController.getHeroInfo(hero, heroId).ngLevel;
+    bytes32 heroPackedIdValue = PackingLib.packNftIdWithValue(hero, heroId, ngLevel);
+
+    EnumerableMap.Bytes32ToUintMap storage customData = s.heroCustomDataV2[heroPackedIdValue];
 
     // set initial karma
-    customData[KARMA_HASH] = 1000;
-    emit IApplicationEvents.HeroCustomDataChanged(heroToken, heroTokenId, KARMA_HASH, 1000);
+    customData.set(KARMA_HASH, DEFAULT_KARMA_VALUE);
+    emit IApplicationEvents.HeroCustomDataChangedNg(hero, heroId, KARMA_HASH, DEFAULT_KARMA_VALUE, ngLevel);
 
-    // set hero class as parameter for stories
-    customData[HERO_CLASS_HASH] = heroClass;
-    emit IApplicationEvents.HeroCustomDataChanged(heroToken, heroTokenId, HERO_CLASS_HASH, heroClass);
+    // HERO_CLASS_HASH is not used as custom data anymore, getter takes value directly from heroController
+
+    // set death count value
+    // customData[DEATH_COUNT_HASH] is initialized by 0 by default
+    emit IApplicationEvents.HeroCustomDataChangedNg(hero, heroId, DEATH_COUNT_HASH, 0, ngLevel);
+  }
+
+  function _initCoreAndAttributes(IStatController.MainState storage s, bytes32 heroPackedId, uint heroClass) internal returns (
+    uint32[] memory baseStats
+  ){
+    _initNewHeroCore(s, heroPackedId, heroClass);
+    bytes32[] storage totalAttributes = s.heroTotalAttributes[heroPackedId];
+    return StatLib.initAttributes(totalAttributes, heroClass, 1, heroClass.initialHero().core);
   }
 
   function _initNewHeroCore(IStatController.MainState storage s, bytes32 heroPackedId, uint heroClass) internal {
@@ -314,10 +471,6 @@ library StatControllerLib {
     s._heroCore[heroPackedId] = PackingLib.packInt32Array(arr);
   }
 
-  function _initChangeableStats(IStatController.MainState storage s, bytes32 heroPackedId, uint32[] memory baseStats) internal {
-    _changeChangeableStats(s, heroPackedId, 1, 0, baseStats[0], baseStats[1], baseStats[2]);
-  }
-
   function _changeChangeableStats(
     IStatController.MainState storage s,
     bytes32 heroPackedId,
@@ -327,7 +480,7 @@ library StatControllerLib {
     uint32 mana,
     uint32 lifeChances
   ) internal {
-    if(lifeChances != 0 && life == 0) {
+    if (lifeChances != 0 && life == 0) {
       life = 1;
     }
     uint32[] memory data = new uint32[](5);
@@ -413,6 +566,10 @@ library StatControllerLib {
       currentStats.experience += change.experience;
       life = uint32(Math.min(maxLife.toUint(), uint(life + change.life)));
       mana = uint32(Math.min(maxMana.toUint(), uint(mana + change.mana)));
+
+      // Assume that Life Chances can be increased only by 1 per use.
+      // Some stories and events can allow users to increase life chance above max...
+      // Such attempts should be forbidden on UI side, we just silently ignore them here, no revert
       lifeChances = uint32(Math.min(maxLC.toUint(), uint(lifeChances + change.lifeChances)));
     } else {
       if (change.experience != 0) revert IAppErrors.ErrorExperienceMustNotDecrease();
@@ -688,6 +845,46 @@ library StatControllerLib {
     return currentStats.level;
   }
 
+  /// @notice scb-1009: Update current values of Life and mana during reinforcement as following:
+  /// Reinforcement increases max value of life/mana on DELTA, current value of life/mana is increased on DELTA too
+  /// @param prevAttributes Hero attributes before reinforcement
+  function restoreLifeAndMana(
+    IStatController.MainState storage s,
+    IController c,
+    address heroToken,
+    uint heroTokenId,
+    int32[] memory prevAttributes
+  ) internal {
+    onlyRegisteredContract(c);
+
+    IStatController.ChangeableStats memory currentStats = heroStats(s, heroToken, heroTokenId);
+    bytes32 heroPackedId = PackingLib.packNftId(heroToken, heroTokenId);
+
+    // assume here that totalAttributes were already updated during reinforcement
+    // and so max values of life and mana were increased on delta1 and delta2
+    bytes32[] storage totalAttributes = s.heroTotalAttributes[heroPackedId];
+
+    // now increase current values of life and mana on delta1 and delta2 too
+    currentStats.life += _getPositiveDelta(totalAttributes.getInt32(uint(IStatController.ATTRIBUTES.LIFE)), prevAttributes[uint(IStatController.ATTRIBUTES.LIFE)]);
+    currentStats.mana += _getPositiveDelta(totalAttributes.getInt32(uint(IStatController.ATTRIBUTES.MANA)), prevAttributes[uint(IStatController.ATTRIBUTES.MANA)]);
+
+    _changeChangeableStats(
+      s,
+      heroPackedId,
+      currentStats.level,
+      currentStats.experience,
+      currentStats.life,
+      currentStats.mana,
+      currentStats.lifeChances
+    );
+  }
+
+  function _getPositiveDelta(int32 a, int32 b) internal pure returns (uint32) {
+    return a < b
+      ? 0
+      : uint32(uint(int(a - b)));
+  }
+
   function _addCoreToTotal(
     IController c,
     bytes32[] storage totalAttributes,
@@ -712,15 +909,15 @@ library StatControllerLib {
     bytes32 index,
     uint value
   ) internal {
-    StatControllerLib.onlyRegisteredContract(c);
+    IHeroController heroController = StatControllerLib.onlyRegisteredContract(c);
+    uint8 ngLevel = heroController.getHeroInfo(token, tokenId).ngLevel;
 
     if (index == KARMA_HASH && value == 0) {
       revert IAppErrors.ErrorZeroKarmaNotAllowed();
     }
 
-    s.heroCustomData[PackingLib.packNftId(token, tokenId)][index] = value;
-
-    emit IApplicationEvents.HeroCustomDataChanged(token, tokenId, index, value);
+    s.heroCustomDataV2[PackingLib.packNftIdWithValue(token, tokenId, ngLevel)].set(index, value);
+    emit IApplicationEvents.HeroCustomDataChangedNg(token, tokenId, index, value, ngLevel);
   }
 
   function setGlobalCustomData(

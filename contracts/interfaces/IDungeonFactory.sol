@@ -144,4 +144,10 @@ interface IDungeonFactory {
 
   function setBossCompleted(uint32 objectId, address heroToken, uint heroTokenId, uint8 heroBiome) external;
 
+  /// @notice Hero exists current dungeon forcibly same as when dying but without loosing life chance
+  function exitForcibly(address heroToken, uint heroTokenId, address msgSender) external;
+
+  function maxAvailableBiome() external view returns (uint8);
+
+  function reborn(address hero, uint heroId) external;
 }

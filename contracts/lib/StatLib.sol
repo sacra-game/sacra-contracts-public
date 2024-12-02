@@ -26,6 +26,7 @@ library StatLib {
   uint public constant BIOME_LEVEL_STEP = 5;
   uint internal constant _MAX_AMPLIFIER = 1e18;
   uint private constant _PRECISION = 1e18;
+  uint private constant VIRTUAL_LEVEL_GAP = 2;
 
   /// @dev Assume MAX_BIOME * BIOME_LEVEL_STEP < MAX_LEVEL + 1, see dungeonTreasuryReward
   uint public constant MAX_POSSIBLE_BIOME = 19;
@@ -69,6 +70,10 @@ library StatLib {
 
   //region --------------------------- BASE
 
+  function isNetworkWithOldSavage() public view returns (bool) {
+    return block.chainid == uint(111188) || block.chainid == uint(250);
+  }
+
   // --- HERO 1 (Slave) ---
 
   function initialHero1() internal pure returns (InitialHero memory) {
@@ -101,7 +106,10 @@ library StatLib {
 
   // --- HERO 2 (Spata) ---
 
-  function initialHero2() internal pure returns (InitialHero memory) {
+  function initialHero2() internal view returns (InitialHero memory) {
+
+    bool old = isNetworkWithOldSavage();
+
     return InitialHero({
       core: IStatController.CoreAttributes({
       strength: 30,
@@ -112,8 +120,8 @@ library StatLib {
 
       multiplier: BaseMultiplier({
       minDamage: 0.15e18,
-      maxDamage: 0.25e18,
-      attackRating: 2e18,
+      maxDamage: old ? 0.25e18 : 0.5e18,
+      attackRating: old ? 2e18 : 3e18,
       defense: 1e18,
       blockRating: 0.08e18,
       life: 1.3e18,
@@ -251,7 +259,7 @@ library StatLib {
 
   // ------
 
-  function initialHero(uint heroClass) internal pure returns (InitialHero memory) {
+  function initialHero(uint heroClass) internal view returns (InitialHero memory) {
     if (heroClass == 1) {
       return initialHero1();
     } else if (heroClass == 2) {
@@ -272,41 +280,41 @@ library StatLib {
 
   //region --------------------------- CALCULATIONS
 
-  function minDamage(int32 strength, uint heroClass) internal pure returns (int32) {
+  function minDamage(int32 strength, uint heroClass) internal view returns (int32) {
     return int32(int(strength.toUint() * initialHero(heroClass).multiplier.minDamage / _PRECISION));
   }
 
-  function maxDamage(int32 strength, uint heroClass) internal pure returns (int32){
+  function maxDamage(int32 strength, uint heroClass) internal view returns (int32){
     return int32(int(strength.toUint() * initialHero(heroClass).multiplier.maxDamage / _PRECISION));
   }
 
-  function attackRating(int32 dexterity, uint heroClass) internal pure returns (int32){
+  function attackRating(int32 dexterity, uint heroClass) internal view returns (int32){
     return int32(int(dexterity.toUint() * initialHero(heroClass).multiplier.attackRating / _PRECISION));
   }
 
-  function defense(int32 dexterity, uint heroClass) internal pure returns (int32){
+  function defense(int32 dexterity, uint heroClass) internal view returns (int32){
     return int32(int(dexterity.toUint() * initialHero(heroClass).multiplier.defense / _PRECISION));
   }
 
-  function blockRating(int32 dexterity, uint heroClass) internal pure returns (int32){
+  function blockRating(int32 dexterity, uint heroClass) internal view returns (int32){
     return int32(int(Math.min((dexterity.toUint() * initialHero(heroClass).multiplier.blockRating / _PRECISION), 75)));
   }
 
-  function life(int32 vitality, uint heroClass, uint32 level) internal pure returns (int32){
+  function life(int32 vitality, uint heroClass, uint32 level) internal view returns (int32){
     return int32(int(
       (vitality.toUint() * initialHero(heroClass).multiplier.life / _PRECISION)
       + (uint(level) * initialHero(heroClass).levelUp.life / _PRECISION)
     ));
   }
 
-  function mana(int32 energy, uint heroClass, uint32 level) internal pure returns (int32){
+  function mana(int32 energy, uint heroClass, uint32 level) internal view returns (int32){
     return int32(int(
       (energy.toUint() * initialHero(heroClass).multiplier.mana / _PRECISION)
       + (uint(level) * initialHero(heroClass).levelUp.mana / _PRECISION)
     ));
   }
 
-  function lifeChances(uint heroClass, uint32 /*level*/) internal pure returns (int32){
+  function lifeChances(uint heroClass, uint32 /*level*/) internal view returns (int32){
     return initialHero(heroClass).baseLifeChances;
   }
 
@@ -335,42 +343,33 @@ library StatLib {
     return Math.max(Math.min(base, 0.95e18), 0.2e18);
   }
 
-  function experienceToLvl(uint experience, uint startFromLevel) internal pure returns (uint level) {
+  function experienceToVirtualLevel(uint experience, uint startFromLevel) internal pure returns (uint level) {
     level = startFromLevel;
     for (; level < MAX_LEVEL;) {
-      if (levelExperience(uint32(level)) >= experience) {
+      if (levelExperience(uint32(level)) >= (experience + 1)) {
         break;
       }
       unchecked{++level;}
     }
   }
 
-  function expPerMonster(uint32 monsterExp, uint monsterRarity, uint32 heroExp, uint32 heroCurrentLvl, uint monsterBiome) internal pure returns (uint32) {
-    uint heroLvl = experienceToLvl(uint(heroExp), uint(heroCurrentLvl));
-    uint heroBiome = heroLvl / StatLib.BIOME_LEVEL_STEP + 1;
-    uint base = uint(monsterExp) + uint(monsterExp) * monsterRarity / _MAX_AMPLIFIER;
-
-    // reduce exp if hero not in his biome
-    if (heroBiome > monsterBiome) {
-      base = base / (2 ** (heroBiome - monsterBiome));
-    }
-    return uint32(base);
+  function expPerMonster(uint32 monsterExp, uint monsterRarity, uint32 /*heroExp*/, uint32 /*heroCurrentLvl*/, uint /*monsterBiome*/) internal pure returns (uint32) {
+    // do not reduce exp per level, it is no economical sense
+    return uint32(uint(monsterExp) + uint(monsterExp) * monsterRarity / _MAX_AMPLIFIER);
   }
 
   /// @notice Allow to calculate delta param for {mintDropChance}
-  function mintDropChanceDelta(uint experience, uint startFromLevel, uint monsterBiome) internal pure returns (uint) {
-    uint heroBiome = StatLib.experienceToLvl(experience, startFromLevel) / StatLib.BIOME_LEVEL_STEP + 1;
-    return heroBiome > monsterBiome ? 2**(heroBiome - monsterBiome) : 0;
+  function mintDropChanceDelta(uint heroCurrentExp, uint heroCurrentLevel, uint monsterBiome) internal pure returns (uint) {
+    uint heroBiome = getVirtualLevel(heroCurrentExp, heroCurrentLevel, true) / StatLib.BIOME_LEVEL_STEP + 1;
+    return heroBiome > monsterBiome ? 2 ** (heroBiome - monsterBiome + 10) : 0;
   }
 
-  /// @param delta 2 ** (heroBiome - monsterBiome) or zero if heroBiome < monsterBiome, see {mintDropChanceDelta}
-  function mintDropChance(uint baseChance, uint monsterRarity, uint delta) internal pure returns (uint) {
-    uint chance = baseChance + baseChance * monsterRarity / _MAX_AMPLIFIER;
-
-    // reduce chance if hero not in his biome
-    return delta == 0
-      ? chance
-      : chance / delta;
+  function getVirtualLevel(uint heroCurrentExp, uint heroCurrentLevel, bool withGap) internal pure returns (uint) {
+    uint virtualLevel = StatLib.experienceToVirtualLevel(heroCurrentExp, heroCurrentLevel);
+    if (withGap && (virtualLevel + 1) > VIRTUAL_LEVEL_GAP) {
+      virtualLevel -= VIRTUAL_LEVEL_GAP;
+    }
+    return virtualLevel;
   }
 
   function initAttributes(
@@ -405,7 +404,7 @@ library StatLib {
     int32[] memory bonus,
     uint heroClass,
     uint32 level
-  ) internal pure returns (int32[] memory) {
+  ) internal view returns (int32[] memory) {
     int32 strength = attributes[uint(IStatController.ATTRIBUTES.STRENGTH)];
     int32 dexterity = attributes[uint(IStatController.ATTRIBUTES.DEXTERITY)];
     int32 vitality = attributes[uint(IStatController.ATTRIBUTES.VITALITY)];

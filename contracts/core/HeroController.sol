@@ -14,21 +14,17 @@ contract HeroController is Controllable, ERC2771Context, IHeroController {
   using PackingLib for address;
 
   /// @notice Version of the contract
-  string public constant VERSION = "1.0.2";
+  string public constant VERSION = "1.0.3";
 
-  //region ------------------------ INITIALIZER
+  //region ------------------------ Initializer
 
   function init(address controller_) external initializer {
     __Controllable_init(controller_);
   }
-  //endregion ------------------------ INITIALIZER
+  //endregion ------------------------ Initializer
 
 
-  //region ------------------------ VIEWS
-  function heroTokensVault() external view returns (address) {
-    return HeroControllerLib.heroTokensVault();
-  }
-
+  //region ------------------------ Views
   function payTokenInfo(address hero) external view returns (address token, uint amount) {
     return HeroControllerLib.payTokenInfo(hero);
   }
@@ -63,25 +59,59 @@ contract HeroController is Controllable, ERC2771Context, IHeroController {
   function isAllowedToTransfer(address hero, uint heroId) external view override returns (bool) {
     return HeroControllerLib.isAllowedToTransfer(IController(controller()), hero, heroId);
   }
-  //endregion ------------------------ VIEWS
 
-  //region ------------------------ GOV ACTIONS
-
-  function setHeroTokensVault(address value) external {
-    HeroControllerLib.setHeroTokensVault(IController(controller()), value);
+  function countHeroTransfers(address hero, uint heroId) external view returns (uint) {
+    return HeroControllerLib.countHeroTransfers(hero, heroId);
   }
+
+  function getTier(uint8 tier, address hero) external view returns (uint payAmount, uint8[] memory slots, address[][] memory items) {
+    return HeroControllerLib.getTier(tier, hero);
+  }
+
+  function getHeroInfo(address hero, uint heroId) external view returns (IHeroController.HeroInfo memory data) {
+    return HeroLib.getHeroInfo(hero, heroId);
+  }
+
+  /// @notice Max value of NG_LEVEL opened by any heroes
+  function maxOpenedNgLevel() external view returns (uint) {
+    return HeroLib.maxOpenedNgLevel();
+  }
+
+  /// @return time stamp of the moment when the boss of the given biome at the given NG_LEVEL was killed by the hero
+  function killedBosses(address hero, uint heroId, uint8 biome, uint8 ngLevel) external view returns (uint) {
+    return HeroLib.killedBosses(hero, heroId, biome, ngLevel);
+  }
+
+  function maxUserNgLevel(address user) external view returns (uint) {
+    return HeroLib.maxUserNgLevel(user);
+  }
+  //endregion ------------------------ Views
+
+  //region ------------------------ Governance actions
 
   function registerHero(address hero, uint8 heroClass_, address payToken, uint payAmount) external {
     HeroControllerLib.registerHero(IController(controller()), hero, heroClass_, payToken, payAmount);
   }
-  //endregion ------------------------ GOV ACTIONS
+
+  /// @param payAmount Limited by uint72, see remarks to IHeroController.HeroInfo
+  function setTier(uint8 tier, address hero, uint72 payAmount, uint8[] memory slots, address[][] memory items) external {
+    HeroControllerLib.setTier(IController(controller()), tier, hero, payAmount, slots, items);
+  }
+
+  //endregion ------------------------ Governance actions
 
   //region ------------------------ USER ACTIONS
 
+  function createHero(address hero, HeroCreationData memory data) external returns (uint) {
+    return HeroControllerLib.createHero(IController(controller()), _msgSender(), hero, data);
+  }
+
+  /// @notice Create a hero in tier 1. Deprecated, use {createHero} instead
   function create(address hero, string calldata heroName_, bool enter) external override returns (uint) {
     return HeroControllerLib.create(IController(controller()), _msgSender(), hero, heroName_, enter);
   }
 
+  /// @notice Create a hero in tier 1 with given {refCode}. Deprecated, use {createHero} instead
   function createWithRefCode(address hero, string calldata heroName_, string calldata refCode, bool enter) external returns (uint) {
     return HeroControllerLib.createWithRefCode(_isNotSmartContract(), IController(controller()), _msgSender(), hero, heroName_, refCode, enter);
   }
@@ -94,19 +124,49 @@ contract HeroController is Controllable, ERC2771Context, IHeroController {
     HeroControllerLib.levelUp(_isNotSmartContract(), IController(controller()), _msgSender(), hero, heroId, change);
   }
 
-  function askReinforcement(address hero, uint heroId) external virtual {
-    HeroControllerLib.askReinforcement(_isNotSmartContract(), IController(controller()), _msgSender(), hero, heroId);
+  function askReinforcement(address hero, uint heroId, address helper, uint helperId) external virtual {
+    HeroControllerLib.askReinforcement(_isNotSmartContract(), IController(controller()), _msgSender(), hero, heroId, helper, helperId);
+  }
+
+  /// @notice Check if transfer is allowed and increment counter of transfers for the hero
+  function beforeTokenTransfer(address hero, uint heroId) external returns (bool isAllowedToTransferOut) {
+    return HeroControllerLib.beforeTokenTransfer(IController(controller()), _msgSender(), hero, heroId);
+  }
+
+  function askGuildReinforcement(address hero, uint heroId, address helper, uint helperId) external {
+    HeroControllerLib.askGuildReinforcement(IController(controller()), hero, heroId, helper, helperId);
+  }
+
+  /// @dev Approve to controller is required if the hero is post-paid and upgrade to pre-paid is available.
+  /// The hero is upgraded to tier=1 always
+  function reborn(address hero, uint heroId) external {
+    HeroControllerLib.reborn(IController(controller()), _msgSender(), hero, heroId);
   }
   //endregion ------------------------ USER ACTIONS
 
   //region ------------------------ DUNGEON ACTIONS
 
   function kill(address hero, uint heroId) external override returns (bytes32[] memory dropItems) {
-    return HeroControllerLib.kill(IController(controller()), _msgSender(), hero, heroId);
+    return HeroLib.kill(IController(controller()), _msgSender(), hero, heroId);
+  }
+
+  function softKill(address hero, uint heroId, bool decLifeChances, bool resetMana) external override returns (
+    bytes32[] memory dropItems
+  ) {
+    return HeroLib.softKill(IController(controller()), _msgSender(), hero, heroId, decLifeChances, resetMana);
   }
 
   function releaseReinforcement(address hero, uint heroId) external override returns (address helperToken, uint helperId) {
-    return HeroControllerLib.releaseReinforcement(IController(controller()), _msgSender(), hero, heroId);
+    return HeroLib.releaseReinforcement(IController(controller()), _msgSender(), hero, heroId);
+  }
+
+  /// @notice Life => 1, mana => 0
+  function resetLifeAndMana(address hero, uint heroId) external {
+    return HeroLib.resetLifeAndMana(IController(controller()), _msgSender(), hero, heroId);
+  }
+
+  function registerKilledBoss(address hero, uint heroId, uint32 bossObjectId) external {
+    return HeroControllerLib.registerKilledBoss(IController(controller()), _msgSender(), hero, heroId, bossObjectId);
   }
   //endregion ------------------------ DUNGEON ACTIONS
 }

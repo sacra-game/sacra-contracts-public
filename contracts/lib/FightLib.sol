@@ -9,6 +9,7 @@ import "../interfaces/IApplicationEvents.sol";
 import "../lib/StatLib.sol";
 import "../lib/CalcLib.sol";
 import "../lib/PackingLib.sol";
+import "../solady/FixedPointMathLib.sol";
 
 library FightLib {
   using PackingLib for bytes32;
@@ -31,6 +32,15 @@ library FightLib {
   int32 internal constant RESISTANCE_DENOMINATOR = 100;
   int32 internal constant _MAX_RESIST = 90;
 
+  /// @notice SIP-002 constant: desired capacity
+  uint internal constant CAPACITY_RESISTS_DEFS = 90;
+  /// @notice SIP-002 constant: desired capacity
+  uint internal constant CAPACITY_CRITICAL_HIT_STATUSES = 100;
+  /// @notice SIP-002 constant: the factor of how fast the value will reach the capacity
+  uint internal constant K_FACTOR = 100;
+  /// @notice ln(2), decimals 18
+  int internal constant LN2 = 693147180559945309;
+
   //endregion ------------------------ Constants
 
   //region ------------------------ Main logic
@@ -42,6 +52,7 @@ library FightLib {
   function fight(
     IItemController ic,
     IFightCalculator.FightCall memory callData,
+    address msgSender,
     function (uint) internal view returns (uint) random_
   ) internal returns (
     IFightCalculator.FightResult memory
@@ -50,7 +61,7 @@ library FightLib {
 
     fightProcessing(fResult, random_);
 
-    emit IApplicationEvents.FightResultProcessed(msg.sender, fResult, callData, callData.iteration);
+    emit IApplicationEvents.FightResultProcessed(msgSender, fResult, callData, callData.iteration);
 
     return IFightCalculator.FightResult({
       healthA: fResult.fighterA.health,
@@ -199,21 +210,21 @@ library FightLib {
 
       IFightCalculator.Statuses memory statuses = isA ? fResult.fighterB.statuses : fResult.fighterA.statuses;
 
-      int32 resist = defenderInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.RESIST_TO_STATUSES)];
+      int32 resist = _getAttrValue(defenderInfo.fighterAttributes, IStatController.ATTRIBUTES.RESIST_TO_STATUSES);
 
       statuses.stun = statusChance(attackerInfo, attackerMA, IStatController.ATTRIBUTES.STUN, resist, random_);
       statuses.burn = statusChance(
         attackerInfo,
         attackerMA,
         IStatController.ATTRIBUTES.BURN,
-        defenderInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.FIRE_RESISTANCE)],
+        _getAttrValue(defenderInfo.fighterAttributes, IStatController.ATTRIBUTES.FIRE_RESISTANCE),
         random_
       );
       statuses.freeze = statusChance(
         attackerInfo,
         attackerMA,
         IStatController.ATTRIBUTES.FREEZE,
-        defenderInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.COLD_RESISTANCE)],
+        _getAttrValue(defenderInfo.fighterAttributes, IStatController.ATTRIBUTES.COLD_RESISTANCE),
         random_
       );
       statuses.confuse = statusChance(attackerInfo, attackerMA, IStatController.ATTRIBUTES.CONFUSE, resist, random_);
@@ -286,14 +297,14 @@ library FightLib {
     damage = decreaseDmgByDmgReduction(damage, defenderInfo);
 
     attackResult.missed = random_(1e18) > StatLib.chanceToHit(
-      attackerInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.ATTACK_RATING)].toUint(),
-      defenderInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.DEFENSE)].toUint(),
+      _getAttrValue(attackerInfo.fighterAttributes, IStatController.ATTRIBUTES.ATTACK_RATING).toUint(),
+      _getAttrValue(defenderInfo.fighterAttributes, IStatController.ATTRIBUTES.DEFENSE).toUint(),
       attackerInfo.fighterStats.level,
       defenderInfo.fighterStats.level,
-      attackerInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.AR_FACTOR)].toUint()
+      _getAttrValue(attackerInfo.fighterAttributes, IStatController.ATTRIBUTES.AR_FACTOR).toUint()
     ) ? 1 : 0;
 
-    attackResult.blocked = (random_(100) < defenderInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.BLOCK_RATING)].toUint()) ? 1 : 0;
+    attackResult.blocked = (random_(100) < _getAttrValue(defenderInfo.fighterAttributes, IStatController.ATTRIBUTES.BLOCK_RATING).toUint()) ? 1 : 0;
 
     if (attackResult.missed != 0 || attackResult.blocked != 0) {
       damage = 0;
@@ -314,8 +325,8 @@ library FightLib {
     function (uint) internal view returns (uint) random_
   ) internal view returns (int32) {
     return int32(int(CalcLib.pseudoRandomInRangeFlex(
-      attributes[uint(IStatController.ATTRIBUTES.DAMAGE_MIN)].toUint(),
-      attributes[uint(IStatController.ATTRIBUTES.DAMAGE_MAX)].toUint(),
+      _getAttrValue(attributes, IStatController.ATTRIBUTES.DAMAGE_MIN).toUint(),
+      _getAttrValue(attributes, IStatController.ATTRIBUTES.DAMAGE_MAX).toUint(),
       random_
     )));
   }
@@ -367,13 +378,13 @@ library FightLib {
   function increaseRaceDmg(int32 dmg, IFightCalculator.FighterInfo memory attackerInfo, uint defenderRace)
   internal pure returns (int32) {
     if (defenderRace == uint(IStatController.Race.HUMAN)) {
-      return dmg + attackerInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.DMG_AGAINST_HUMAN)] * dmg / RESISTANCE_DENOMINATOR;
+      return dmg + _getAttrValue(attackerInfo.fighterAttributes, IStatController.ATTRIBUTES.DMG_AGAINST_HUMAN) * dmg / RESISTANCE_DENOMINATOR;
     } else if (defenderRace == uint(IStatController.Race.UNDEAD)) {
-      return dmg + attackerInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.DMG_AGAINST_UNDEAD)] * dmg / RESISTANCE_DENOMINATOR;
+      return dmg + _getAttrValue(attackerInfo.fighterAttributes, IStatController.ATTRIBUTES.DMG_AGAINST_UNDEAD) * dmg / RESISTANCE_DENOMINATOR;
     } else if (defenderRace == uint(IStatController.Race.DAEMON)) {
-      return dmg + attackerInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.DMG_AGAINST_DAEMON)] * dmg / RESISTANCE_DENOMINATOR;
+      return dmg + _getAttrValue(attackerInfo.fighterAttributes, IStatController.ATTRIBUTES.DMG_AGAINST_DAEMON) * dmg / RESISTANCE_DENOMINATOR;
     } else if (defenderRace == uint(IStatController.Race.BEAST)) {
-      return dmg + attackerInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.DMG_AGAINST_BEAST)] * dmg / RESISTANCE_DENOMINATOR;
+      return dmg + _getAttrValue(attackerInfo.fighterAttributes, IStatController.ATTRIBUTES.DMG_AGAINST_BEAST) * dmg / RESISTANCE_DENOMINATOR;
     } else {
       return dmg;
     }
@@ -396,17 +407,17 @@ library FightLib {
 
   /// @notice Calculate damage after Melee-attack
   function increaseMeleeDmgByFactor(int32 dmg, IFightCalculator.FighterInfo memory attackerInfo) internal pure returns (int32){
-    return dmg + attackerInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.MELEE_DMG_FACTOR)] * dmg / RESISTANCE_DENOMINATOR;
+    return dmg + _getAttrValue(attackerInfo.fighterAttributes, IStatController.ATTRIBUTES.MELEE_DMG_FACTOR) * dmg / RESISTANCE_DENOMINATOR;
   }
 
   /// @notice Calculate damage after Magic-attack
   function increaseMagicDmgByFactor(int32 dmg, IFightCalculator.FighterInfo memory attackerInfo, IItemController.AttackType aType) internal pure returns (int32) {
     if (aType == IItemController.AttackType.FIRE) {
-      return dmg + dmg * attackerInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.FIRE_DMG_FACTOR)] / RESISTANCE_DENOMINATOR;
+      return dmg + dmg * _getAttrValue(attackerInfo.fighterAttributes, IStatController.ATTRIBUTES.FIRE_DMG_FACTOR) / RESISTANCE_DENOMINATOR;
     } else if (aType == IItemController.AttackType.COLD) {
-      return dmg + dmg * attackerInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.COLD_DMG_FACTOR)] / RESISTANCE_DENOMINATOR;
+      return dmg + dmg * _getAttrValue(attackerInfo.fighterAttributes, IStatController.ATTRIBUTES.COLD_DMG_FACTOR) / RESISTANCE_DENOMINATOR;
     } else if (aType == IItemController.AttackType.LIGHTNING) {
-      return dmg + dmg * attackerInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.LIGHTNING_DMG_FACTOR)] / RESISTANCE_DENOMINATOR;
+      return dmg + dmg * _getAttrValue(attackerInfo.fighterAttributes, IStatController.ATTRIBUTES.LIGHTNING_DMG_FACTOR) / RESISTANCE_DENOMINATOR;
     } else {
       return dmg;
     }
@@ -462,14 +473,14 @@ library FightLib {
 
   /// @notice Calculate life-stolen-per-hit value for the given {damage} value
   function lifeStolenPerHit(int32 dmg, IFightCalculator.FighterInfo memory attackerInfo) internal pure returns (int32) {
-    return dmg * attackerInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.LIFE_STOLEN_PER_HIT)] / RESISTANCE_DENOMINATOR;
+    return dmg * _getAttrValue(attackerInfo.fighterAttributes, IStatController.ATTRIBUTES.LIFE_STOLEN_PER_HIT) / RESISTANCE_DENOMINATOR;
   }
 
   /// @notice Increase {fighter.health} on the value of life-stolen-per-hit (only if the health > 0)
   function stealLife(IFightCalculator.Fighter memory fighter, AttackResult memory attackResult) internal pure {
     if (fighter.health != 0) {
       int32 newHealth = fighter.health + attackResult.lifeStolen;
-      int32 maxHealth = fighter.info.fighterAttributes[uint(IStatController.ATTRIBUTES.LIFE)];
+      int32 maxHealth = _getAttrValue(fighter.info.fighterAttributes, IStatController.ATTRIBUTES.LIFE);
       fighter.health = (CalcLib.minI32(newHealth, maxHealth));
     }
   }
@@ -504,16 +515,16 @@ library FightLib {
     IFightCalculator.FighterInfo memory fighterAInfo,
     IFightCalculator.FighterInfo memory fighterBInfo
   ) internal pure returns (bool) {
-    return fighterAInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.ATTACK_RATING)]
-      >= fighterBInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.ATTACK_RATING)];
+    return _getAttrValue(fighterAInfo.fighterAttributes, IStatController.ATTRIBUTES.ATTACK_RATING)
+      >= _getAttrValue(fighterBInfo.fighterAttributes, IStatController.ATTRIBUTES.ATTACK_RATING);
   }
 
   function reflectMeleeDmg(int32 dmg, IFightCalculator.FighterInfo memory defenderInfo) internal pure returns (int32) {
-    return dmg * defenderInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.REFLECT_DAMAGE_MELEE)] / RESISTANCE_DENOMINATOR;
+    return dmg * _getAttrValue(defenderInfo.fighterAttributes, IStatController.ATTRIBUTES.REFLECT_DAMAGE_MELEE) / RESISTANCE_DENOMINATOR;
   }
 
   function reflectMagicDmg(int32 dmg, IFightCalculator.FighterInfo memory defenderInfo) internal pure returns (int32) {
-    return dmg * defenderInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.REFLECT_DAMAGE_MAGIC)] / RESISTANCE_DENOMINATOR;
+    return dmg * _getAttrValue(defenderInfo.fighterAttributes, IStatController.ATTRIBUTES.REFLECT_DAMAGE_MAGIC) / RESISTANCE_DENOMINATOR;
   }
 
   function _getChance(
@@ -522,19 +533,21 @@ library FightLib {
     IStatController.ATTRIBUTES index,
     int32 resist
   ) internal pure returns (int32 chance) {
-    chance = attackerInfo.fighterAttributes[uint(index)];
+    int32 chanceBase = attackerInfo.fighterAttributes[uint(index)];
 
     if (attackerInfo.attackType == IFightCalculator.AttackType.MAGIC) {
       if (index == IStatController.ATTRIBUTES.BURN && aType == IItemController.AttackType.FIRE) {
-        chance += int32(20);
+        chanceBase += int32(20);
       }
       if (index == IStatController.ATTRIBUTES.FREEZE && aType == IItemController.AttackType.COLD) {
-        chance += int32(20);
+        chanceBase += int32(20);
       }
       if (index == IStatController.ATTRIBUTES.CONFUSE && aType == IItemController.AttackType.LIGHTNING) {
-        chance += int32(20);
+        chanceBase += int32(20);
       }
     }
+
+    chance = _getAdjustedAttributeValue(chanceBase, index);
 
     return chance - chance * (CalcLib.minI32(resist, _MAX_RESIST)) / RESISTANCE_DENOMINATOR;
   }
@@ -544,7 +557,7 @@ library FightLib {
     IFightCalculator.FighterInfo memory attackerInfo,
     uint randomValue
   ) internal pure returns (bool) {
-    return randomValue < attackerInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.CRITICAL_HIT)].toUint();
+    return randomValue < _getAttrValue(attackerInfo.fighterAttributes, IStatController.ATTRIBUTES.CRITICAL_HIT).toUint();
   }
 
   /// @param randomValue Result of call CalcLib.pseudoRandom(1e18)
@@ -559,7 +572,7 @@ library FightLib {
   }
 
   function _calcDmgInline(int32 dmg, IFightCalculator.FighterInfo memory info, IStatController.ATTRIBUTES index) internal pure returns (int32) {
-    return dmg * (CalcLib.minI32(info.fighterAttributes[uint(index)], _MAX_RESIST)) / RESISTANCE_DENOMINATOR;
+    return dmg * (CalcLib.minI32(_getAttrValue(info.fighterAttributes, index), _MAX_RESIST)) / RESISTANCE_DENOMINATOR;
   }
 
   function getMagicDamage(
@@ -568,14 +581,75 @@ library FightLib {
     uint randomValue_
   ) internal pure returns (int32) {
 
-    int32 attributeFactorResult = (attackerInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.STRENGTH)] * mAttack.attributeFactors.strength / 100);
-    attributeFactorResult += (attackerInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.DEXTERITY)] * mAttack.attributeFactors.dexterity / 100);
-    attributeFactorResult += (attackerInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.VITALITY)] * mAttack.attributeFactors.vitality / 100);
-    attributeFactorResult += (attackerInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.ENERGY)] * mAttack.attributeFactors.energy / 100);
+    int32 attributeFactorResult = (_getAttrValue(attackerInfo.fighterAttributes, IStatController.ATTRIBUTES.STRENGTH) * mAttack.attributeFactors.strength / 100);
+    attributeFactorResult += (_getAttrValue(attackerInfo.fighterAttributes, IStatController.ATTRIBUTES.DEXTERITY) * mAttack.attributeFactors.dexterity / 100);
+    attributeFactorResult += (_getAttrValue(attackerInfo.fighterAttributes, IStatController.ATTRIBUTES.VITALITY) * mAttack.attributeFactors.vitality / 100);
+    attributeFactorResult += (_getAttrValue(attackerInfo.fighterAttributes, IStatController.ATTRIBUTES.ENERGY) * mAttack.attributeFactors.energy / 100);
 
     return int32(int(randomValue_)) + attributeFactorResult;
   }
-
   //endregion ------------------------ Pure utils
+
+  //region ------------------------ SIP-002
+
+  /// @notice SIP-002: Implement smooth increase that approaches to y0 but never reaches that value
+  /// @dev https://discord.com/channels/1134537718039318608/1265261881652674631
+  /// @param y0 is desired capacity, 90 for resists/defs, 100 for critical hit and statuses
+  /// @param x current value, base attribute. Assume x >= 0
+  /// @param k is the factor of how fast the value will reach 90 capacity, k=100 by default
+  /// @return new attribute value that is used in calculations, decimals 18
+  function getReducedValue(uint y0, uint x, uint k) internal pure returns (uint) {
+    // 2^n = exp(ln(2^n)) = exp(n * ln2)
+    int t = FixedPointMathLib.expWad(-int(x) * LN2 / int(k));
+    return t < 0
+      ? 0 // some mistake happens (???)
+      : y0 * (1e18 - uint(t));
+  }
+
+  /// @notice Apply {getReducedValue} to the given attribute, change value in place
+  function _getAdjustedValue(int32 attributeValue, uint y0, uint k) internal pure returns (int32) {
+    return attributeValue <= 0
+      ? int32(0) // negative values => 0
+      : int32(int(getReducedValue(y0, uint(int(attributeValue)), k) / 1e18));
+  }
+
+  /// @notice Return adjusted attribute value. Adjust selected attributes using y=z(1−2^(−x/k)) formula
+  /// Value in array {attributes} is NOT changed.
+  function _getAttrValue(int32[] memory attributes, IStatController.ATTRIBUTES attrId) internal pure returns (int32) {
+    return _getAdjustedAttributeValue(attributes[uint(attrId)], attrId);
+  }
+
+  function _getAdjustedAttributeValue(int32 value, IStatController.ATTRIBUTES attrId) internal pure returns (int32) {
+    if (
+      attrId == IStatController.ATTRIBUTES.BLOCK_RATING
+      || attrId == IStatController.ATTRIBUTES.FIRE_RESISTANCE
+      || attrId == IStatController.ATTRIBUTES.COLD_RESISTANCE
+      || attrId == IStatController.ATTRIBUTES.LIGHTNING_RESISTANCE
+      || attrId == IStatController.ATTRIBUTES.DEF_AGAINST_HUMAN
+      || attrId == IStatController.ATTRIBUTES.DEF_AGAINST_UNDEAD
+      || attrId == IStatController.ATTRIBUTES.DEF_AGAINST_DAEMON
+      || attrId == IStatController.ATTRIBUTES.DEF_AGAINST_BEAST
+      || attrId == IStatController.ATTRIBUTES.DAMAGE_REDUCTION
+      || attrId == IStatController.ATTRIBUTES.RESIST_TO_STATUSES
+    ) {
+      // use CAPACITY_RESISTS_DEFS, K_FACTOR
+      return _getAdjustedValue(value, CAPACITY_RESISTS_DEFS, K_FACTOR);
+    } else if (
+      attrId == IStatController.ATTRIBUTES.CRITICAL_HIT
+      || attrId == IStatController.ATTRIBUTES.STUN
+      || attrId == IStatController.ATTRIBUTES.BURN
+      || attrId == IStatController.ATTRIBUTES.FREEZE
+      || attrId == IStatController.ATTRIBUTES.CONFUSE
+      || attrId == IStatController.ATTRIBUTES.CURSE
+      || attrId == IStatController.ATTRIBUTES.POISON
+    ) {
+      // use CAPACITY_CRITICAL_HIT_STATUSES, K_FACTOR
+      return _getAdjustedValue(value, CAPACITY_CRITICAL_HIT_STATUSES, K_FACTOR);
+    } else {
+      return value;
+    }
+  }
+
+  //endregion ------------------------ SIP-002
 
 }

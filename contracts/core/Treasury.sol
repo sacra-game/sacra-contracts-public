@@ -65,11 +65,6 @@ contract Treasury is Initializable, Controllable, ITreasury {
     TreasuryLib.sendToDungeon(IController(controller()), dungeon, token, amount);
   }
 
-  /// @dev Assume approve. Move fee to treasury and governance from msg.sender.
-  ///      Anyone can call
-  function sendFee(address token, uint amount, IItemController.FeeType feeType) external override {
-    TreasuryLib.sendFee(IController(controller()), token, amount, feeType);
-  }
   //endregion ------------------------ ACTIONS
 
 }

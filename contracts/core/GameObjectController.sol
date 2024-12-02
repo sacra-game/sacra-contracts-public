@@ -82,8 +82,8 @@ contract GameObjectController is Controllable, IGOC {
     return GameObjectControllerLib.getObjectIds(biome, subType);
   }
 
-  function getMonsterMultiplier() external view returns (int32) {
-    return MonsterLib.getMonsterMultiplier(IController(controller()));
+  function getMonsterMultiplier(uint8 heroNgLevel) external pure returns (uint) {
+    return MonsterLib.monsterMultiplier(heroNgLevel);
   }
   //endregion ------------------------ VIEWS
 

@@ -109,6 +109,22 @@ contract Controller is Controllable, IController {
   function onPause() external view override returns (bool) {
     return ControllerLib.onPause();
   }
+
+  function userController() external view override returns (address) {
+    return ControllerLib.userController();
+  }
+
+  function guildController() external view override returns (address) {
+    return ControllerLib.guildController();
+  }
+
+  function rewardsPool() external view override returns (address) {
+    return ControllerLib.rewardsPool();
+  }
+
+  function gameTokenPrice() external view override returns (uint) {
+    return ControllerLib.gameTokenPrice();
+  }
   //endregion ------------------------ Views
 
   //region ------------------------ Gov actions - setters
@@ -168,6 +184,22 @@ contract Controller is Controllable, IController {
   function changeDeployer(address eoa, bool remove) external {
     ControllerLib.changeDeployer(eoa, remove);
   }
+
+  function setUserController(address value) external {
+    ControllerLib.setUserController(value);
+  }
+
+  function setGuildController(address value) external {
+    ControllerLib.setGuildController(value);
+  }
+
+  function setRewardsPool(address value) external {
+    ControllerLib.setRewardsPool(value);
+  }
+
+  function setGameTokenPrice(uint value) external {
+    ControllerLib.setGameTokenPrice(value);
+  }
   //endregion ------------------------ Gov actions - setters
 
   //region ------------------------ Gov actions - others
@@ -187,4 +219,22 @@ contract Controller is Controllable, IController {
     ControllerLib.changeTreasuryTokenStatus(token, status);
   }
   //endregion ------------------------ REGISTER ACTIONS
+
+  //region ------------------------ User actions
+
+  /// @notice Transfer {amount} from {from}, divide it on three parts: to treasury, to governance, to burn
+  /// User must approve given amount to the controller.
+  /// @param amount Assume that this amount is approved by {from} to this contract
+  function process(address token, uint amount, address from) external {
+    ControllerLib.process(IController(address(this)), token, amount, from);
+  }
+
+  function percentToBurn(uint totalSupply) external pure returns (uint) {
+    return ControllerLib.percentToBurn(totalSupply);
+  }
+
+  function getProcessDetails(address token, uint amount) external view returns (uint toBurn, uint toTreasury, uint toGov, uint toRewardsPool) {
+    (toBurn, toTreasury, toGov, toRewardsPool) = ControllerLib.getProcessDetails(token, amount, IController(address(this)).gameToken());
+  }
+  //endregion ------------------------ User actions
 }

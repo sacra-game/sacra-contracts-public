@@ -42,7 +42,9 @@ contract SponsoredHero is ERC2771Context, ERC721Holder {
     heroController = IHeroController(_heroController);
 
     // infinity approve
-    IERC20(_gameToken).approve(IHeroController(_heroController).heroTokensVault(), type(uint256).max);
+    // Initially it was IERC20(_gameToken).approve(IHeroController(_heroController).heroTokensVault(), type(uint256).max);
+    // so, previously deployed instance of SponsoredHero doesn't work
+    IERC20(_gameToken).approve(controller_, type(uint256).max);
   }
   //endregion ------------------------ Constructor
 

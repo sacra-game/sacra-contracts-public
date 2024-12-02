@@ -75,6 +75,7 @@ library StorySetupLib {
 
   }
 
+  /// @dev Since SIP-003 the burning is replaced by breaking
   function setBurnItemsMeta(
     IStoryController.MainState storage s,
     uint16 storyId,
@@ -89,7 +90,7 @@ library StorySetupLib {
           bytes32[] storage answersBurn = s.burnItem[answerPackedId];
 
           for (uint j; j < meta.slots[i].length; ++j) {
-            bytes32 d = meta.slots[i][j].packBurnInfo(meta.chances[i][j], meta.isStopIfBurnt[i][j]);
+            bytes32 d = meta.slots[i][j].packBreakInfo(meta.chances[i][j], meta.isStopIfBurnt[i][j]);
             if (d != bytes32(0)) {
               answersBurn.push(d);
             }

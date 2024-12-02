@@ -58,4 +58,13 @@ library StringLib {
     return string(abi.encodePacked(a, b));
   }
 
+  function isASCIILettersOnly(string memory str) internal pure returns (bool) {
+    bytes memory b = bytes(str);
+    for (uint i = 0; i < b.length; i++) {
+      if (uint8(b[i]) < 32 || uint8(b[i]) > 127) {
+        return false;
+      }
+    }
+    return true;
+  }
 }

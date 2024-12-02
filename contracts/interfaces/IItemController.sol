@@ -8,7 +8,14 @@ import "../openzeppelin/EnumerableSet.sol";
 
 interface IItemController {
 
-  /// @custom:storage-location erc7201:item.controlbler.main
+  enum GlobalParam {
+    UNKNOWN_0,
+
+    /// @notice Address of ItemControllerHelper
+    ITEM_CONTROLLER_HELPER_ADDRESS_1
+  }
+
+  /// @custom:storage-location erc7201:item.controller.main
   struct MainState {
 
     ////////////////// GENERATE //////////////////
@@ -77,6 +84,24 @@ interface IItemController {
     /// @dev itemAdr+Id => packed AttackInfo: attackType8 + min32 + max32 + factors(packed core 128)
     mapping(bytes32 => bytes32) _itemAttackInfo;
 
+    ////////////////// Additional generate info //////////////////
+
+    /// @notice (itemAdr) => Bitmask of ConsumableActionBits
+    mapping(address => uint) _consumableActionMask;
+
+
+    /// --------------------------------- SIP-003: Item fragility
+    /// @notice itemAdr + id => item fragility counter that displays the chance of an unsuccessful repair
+    /// @dev [0...100_000], decimals 3
+    mapping(bytes32 packedItem => uint fragility) itemFragility;
+
+    /// @notice Universal mapping to store various addresses and numbers (params of the contract)
+    mapping (GlobalParam param => uint value) globalParam;
+
+    /// @notice Item address => packedMetadata
+    /// {packedMetaData} is encoded using abi.encode/abi.decode
+    /// Read first byte, detect meta data type by the byte value, apply proper decoder from PackingLib
+    mapping(address item => bytes packedMetaData) packedItemMetaData;
   }
 
   struct RegisterItemParams {
@@ -92,6 +117,16 @@ interface IItemController {
     ItemGenerateInfo targetAttributes;
 
     AttackInfo genAttackInfo;
+    /// @notice Bit mask of ConsumableActionBits
+    uint consumableActionMask;
+  }
+
+  /// @notice Possible actions that can be triggered by using the consumable item
+  enum ConsumableActionBits {
+    CLEAR_TEMPORARY_ATTRIBUTES_0,
+    EXIT_FROM_DUNGEON_1,
+    RESERVED_2,
+    REST_IN_SHELTER_3
   }
 
   struct ItemGenerateInfo {
@@ -121,6 +156,7 @@ interface IItemController {
     IStatController.CoreAttributes requirements;
   }
 
+  // Deprecated. Todo - remove
   enum FeeType {
     UNKNOWN,
     REPAIR,
@@ -154,6 +190,7 @@ interface IItemController {
     ONE_HAND, // 9
     TWO_HAND, // 10
     SKILL, // 11
+    OTHER, // 12
 
     END_SLOT
   }
@@ -218,6 +255,29 @@ interface IItemController {
     int32[] targetValues;
   }
 
+  ///region ------------------------ Item type "Other"
+  /// @notice Possible kinds of "Other" items
+  /// Each "Other" item has each own structure for metadata, see OtherItemXXX
+  enum OtherSubtypeKind {
+    UNKNOWN_0,
+    /// @notice Item to reduce fragility, see SCB-1014. Metadata is {OtherItemReduceFragility}
+    REDUCE_FRAGILITY_1,
+
+    /// @notice This item allows asking guild reinforcement to the guild member
+    USE_GUILD_REINFORCEMENT_2,
+
+    END_SLOT
+  }
+  struct OtherItemReduceFragility {
+    /// @notice "Other" item kind. It MUST BE first field in the struct.
+    uint8 kind;
+
+    /// @notice Value on which the fragility will be reduced.
+    /// @dev [0...100%], decimals 3, so the value is in the range [0...10_000]
+    uint248 value;
+  }
+  ///endregion ------------------------ Item type "Other"
+
   ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -258,7 +318,7 @@ interface IItemController {
 
   function mint(address item, address recipient) external returns (uint itemId);
 
-  function reduceDurability(address hero, uint heroId, uint8 biome) external;
+  function reduceDurability(address hero, uint heroId, uint8 biome, bool reduceDurabilityAllSkills) external;
 
   function destroy(address item, uint tokenId) external;
 
@@ -270,5 +330,20 @@ interface IItemController {
     uint8 itemSlot,
     address destination,
     bool broken
+  ) external;
+
+  /// @notice SIP-003: item fragility counter that displays the chance of an unsuccessful repair.
+  /// @dev [0...100%], decimals 3, so the value is in the range [0...10_000]
+  function itemFragility(address item, uint itemId) external view returns (uint);
+
+  /// @notice SIP-003: The quest mechanic that previously burned the item will increase its fragility by 1%
+  function incBrokenItemFragility(address item, uint itemId) external;
+
+  function equip(
+    address hero,
+    uint heroId,
+    address[] calldata items,
+    uint[] calldata itemIds,
+    uint8[] calldata itemSlots
   ) external;
 }

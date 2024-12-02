@@ -3,20 +3,9 @@ pragma solidity 0.8.23;
 
 import "../interfaces/IItemController.sol";
 import "../interfaces/IStatController.sol";
+import "../interfaces/IAppErrors.sol";
 
 library PackingLib {
-
-  error TooHighValue(uint value);
-  error OutOfBounds(uint index, uint length);
-  error UnexpectedValue(uint expected, uint actual);
-  error WrongValue(uint newValue, uint actual);
-  error LengthsMismatch();
-  error IntOutOfRange(int value);
-  error ZeroValue();
-  /// @notice packCustomDataChange requires an input string with two zero bytes at the beginning
-  ///         0xXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX0000
-  /// This error happens if these bytes are not zero
-  error IncompatibleInputString();
 
   //////////////////////////
   // ---- PACKING LOGIC ----
@@ -25,7 +14,7 @@ library PackingLib {
   //region ------------------------------------ COMMON
 
   function packNftId(address token, uint id) internal pure returns (bytes32 serialized) {
-    if (id > uint(type(uint64).max)) revert TooHighValue(id);
+    if (id > uint(type(uint64).max)) revert IAppErrors.TooHighValue(id);
     serialized = bytes32(uint(uint160(token)));
     serialized |= bytes32(uint(uint64(id))) << 160;
   }
@@ -36,7 +25,7 @@ library PackingLib {
   }
 
   function packAddressWithAmount(address token, uint amount) internal pure returns (bytes32 data) {
-    if (amount > uint(type(uint96).max)) revert TooHighValue(amount);
+    if (amount > uint(type(uint96).max)) revert IAppErrors.TooHighValue(amount);
     data = bytes32(uint(uint160(token)));
     data |= bytes32(uint(uint96(amount))) << 160;
   }
@@ -60,7 +49,7 @@ library PackingLib {
   /// So, the string looks like following: 0xXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX0000
   /// Last 2 bytes will be used to encode {value}
   function packCustomDataChange(bytes32 customDataIndex, int16 value) internal pure returns (bytes32 data) {
-    if (uint(customDataIndex) != (uint(customDataIndex) >> 16) << 16) revert IncompatibleInputString();
+    if (uint(customDataIndex) != (uint(customDataIndex) >> 16) << 16) revert IAppErrors.IncompatibleInputString();
     data = bytes32(uint(customDataIndex));
     data |= bytes32(uint(uint16(value)));
   }
@@ -113,6 +102,19 @@ library PackingLib {
     lifeChancesRecovered = int32(int(uint(data) >> (32 + 32 + 32)));
     damage = int32(int(uint(data) >> (32 + 32 + 32 + 32)));
     manaConsumed = int32(int(uint(data) >> (32 + 32 + 32 + 32 + 32)));
+  }
+
+  function packNftIdWithValue(address token, uint id, uint32 value) internal pure returns (bytes32 serialized) {
+    if (id > uint(type(uint64).max)) revert IAppErrors.TooHighValue(id);
+    serialized = bytes32(uint(uint160(token)));
+    serialized |= bytes32(uint(uint64(id))) << 160;
+    serialized |= bytes32(uint(value)) << 160 + 64;
+  }
+
+  function unpackNftIdWithValue(bytes32 data) internal pure returns (address token, uint id, uint32 value) {
+    token = address(uint160(uint(data)));
+    id = uint64(uint(data) >> 160);
+    value = uint32(uint(data) >> 160 + 64);
   }
   //endregion ------------------------------------ COMMON
 
@@ -176,6 +178,22 @@ library PackingLib {
     score = uint128(uint(packedData) >> 8);
     fee = uint8(uint(packedData) >> (8 + 128));
     stakeTs = uint64(uint(packedData) >> (8 + 128 + 8));
+  }
+
+  function packConfigReinforcementV2(uint32 min, uint32 max, uint32 lowDivider, uint32 highDivider, uint8 levelLimit) internal pure returns (bytes32 packedData) {
+    packedData = bytes32(uint(min));
+    packedData |= bytes32(uint(max) << 32);
+    packedData |= bytes32(uint(lowDivider) << 64);
+    packedData |= bytes32(uint(highDivider) << 96);
+    packedData |= bytes32(uint(levelLimit) << 128);
+  }
+
+  function unpackConfigReinforcementV2(bytes32 packedData) internal pure returns (uint32 min, uint32 max, uint32 lowDivider, uint32 highDivider, uint8 levelLimit) {
+    min = uint32(uint(packedData));
+    max = uint32(uint(packedData) >> 32);
+    lowDivider = uint32(uint(packedData) >> 64);
+    highDivider = uint32(uint(packedData) >> 96);
+    levelLimit = uint8(uint(packedData) >> 128);
   }
   //endregion ------------------------------------ REINFORCEMENT
 
@@ -522,18 +540,31 @@ library PackingLib {
     isFinalAnswer = uint8(uint(data) >> (32 + 32)) == uint8(1);
   }
 
-  function packBurnInfo(uint8 slot, uint64 chance, bool stopIfBurned) internal pure returns (bytes32 data) {
+  function packBreakInfo(uint8 slot, uint64 chance, bool stopIfBroken) internal pure returns (bytes32 data) {
     data = bytes32(uint(slot));
     data |= bytes32(uint(chance)) << 8;
-    data |= bytes32(uint(stopIfBurned ? uint8(1) : uint8(0))) << (8 + 64);
+    data |= bytes32(uint(stopIfBroken ? uint8(1) : uint8(0))) << (8 + 64);
   }
 
-  function unpackBurnInfo(bytes32 data) internal pure returns (uint8 slot, uint64 chance, bool stopIfBurned) {
+  function unpackBreakInfo(bytes32 data) internal pure returns (uint8 slot, uint64 chance, bool stopIfBurned) {
     slot = uint8(uint(data));
     chance = uint64(uint(data) >> 8);
     stopIfBurned = uint8(uint(data) >> (8 + 64)) == uint8(1);
   }
   //endregion ------------------------------------ STORIES
+
+  //region ------------------------------------ Hero controller
+  function packTierHero(uint8 tier, address hero) internal pure returns (bytes32 packedTierHero) {
+    packedTierHero = bytes32(uint(tier));
+    packedTierHero |= bytes32(uint(uint160(hero)) << 8);
+  }
+
+  function unpackTierHero(bytes32 packedTierHero) internal pure returns (uint8 tier, address hero) {
+    tier = uint8(uint(packedTierHero));
+    hero = address(uint160(uint(packedTierHero) >> 8));
+  }
+
+  //endregion ------------------------------------ Hero controller
 
   ////////////////////////////////////////////////////////////////////////////////////
   // ---- ARRAYS LOGIC ----
@@ -544,7 +575,7 @@ library PackingLib {
 
   function packUint8Array(uint8[] memory data) internal pure returns (bytes32) {
     uint len = data.length;
-    if (len > 32) revert OutOfBounds(len, 32);
+    if (len > 32) revert IAppErrors.OutOfBounds(len, 32);
     bytes32 result;
     for (uint i = 0; i < len; i++) {
       result |= bytes32(uint(data[i])) << (i * 8);
@@ -580,14 +611,14 @@ library PackingLib {
 
   function changeUnit8ArrayWithCheck(bytes32 data, uint index, uint8 value, uint8 expectedPrevValue) internal pure returns (bytes32 newData) {
     uint8[] memory arr = unpackUint8Array(data);
-    if (arr[index] != expectedPrevValue) revert UnexpectedValue(uint(expectedPrevValue), uint(arr[index]));
+    if (arr[index] != expectedPrevValue) revert IAppErrors.UnexpectedValue(uint(expectedPrevValue), uint(arr[index]));
     arr[index] = value;
     return packUint8Array(arr);
   }
 
   function packInt32Array(int32[] memory data) internal pure returns (bytes32) {
     uint len = data.length;
-    if (len > 8) revert OutOfBounds(len, 8);
+    if (len > 8) revert IAppErrors.OutOfBounds(len, 8);
     bytes32 result;
     for (uint i; i < len; i++) {
       result |= bytes32(uint(uint32(data[i]))) << (i * 32);
@@ -605,7 +636,7 @@ library PackingLib {
 
   function packUint32Array(uint32[] memory data) internal pure returns (bytes32) {
     uint len = data.length;
-    if (len > 8) revert OutOfBounds(len, 8);
+    if (len > 8) revert IAppErrors.OutOfBounds(len, 8);
     bytes32 result;
     for (uint i = 0; i < len; i++) {
       result |= bytes32(uint(data[i])) << (i * 32);
@@ -625,7 +656,7 @@ library PackingLib {
   //region ------------------------------------ COMPLEX ARRAYS
 
   // We should represent arrays without concrete size.
-  // For this reason we must not revert on out of bounds but return zero value instead.
+  // For this reason we must not revert IAppErrors.on out of bounds but return zero value instead.
 
   // we need it for properly unpack packed arrays with ids
 //  function getInt32AsInt24(bytes32[] memory arr, uint idx) internal pure returns (int32) {
@@ -651,7 +682,7 @@ library PackingLib {
   }
 
   function getInt32(bytes32[] storage arr, uint idx) internal view returns (int32) {
-    // additional gas usage, but we should not revert on out of bounds
+    // additional gas usage, but we should not revert IAppErrors.on out of bounds
     if (idx / 8 >= arr.length) {
       return int32(0);
     }
@@ -712,7 +743,7 @@ library PackingLib {
   /// @dev pack int32 array into bytes32 array using last 8bytes for ids
   ///      we can not use zero values coz will not able to properly unpack it later
   function toBytes32ArrayWithIds(int32[] memory arr, uint8[] memory ids) internal pure returns (bytes32[] memory) {
-    if (arr.length != ids.length) revert LengthsMismatch();
+    if (arr.length != ids.length) revert IAppErrors.LengthsMismatch();
 
     uint size = arr.length / 8 + 1;
     bytes32[] memory result = new bytes32[](size);
@@ -721,10 +752,8 @@ library PackingLib {
         uint idx = i * 8 + j;
         if (idx >= arr.length) break;
 
-//        console.log("toBytes32ArrayWithIds id: %s, value: %s%s", ids[idx], arr[idx] >= 0 ? '' : '-', arr[idx] >= 0 ? uint(int(arr[idx])) : uint(int(-arr[idx])));
-
-        if (arr[idx] > type(int24).max || arr[idx] < type(int24).min) revert IntOutOfRange(int(arr[idx]));
-        if (arr[idx] == 0) revert ZeroValue();
+        if (arr[idx] > type(int24).max || arr[idx] < type(int24).min) revert IAppErrors.IntOutOfRange(int(arr[idx]));
+        if (arr[idx] == 0) revert IAppErrors.ZeroValue();
         result[i] |= bytes32(uint(uint24(int24(arr[idx])))) << (j * 32);
         result[i] |= bytes32(uint(ids[idx])) << (j * 32 + 24);
       }
@@ -761,4 +790,47 @@ library PackingLib {
   }
   //endregion ------------------------------------ COMPLEX ARRAYS
 
+  //region ------------------------------------ Guilds
+  /// @dev ShelterID is uint. But in the code we assume that this ID can be stored as uint64 (see auctions)
+  /// @param biome 1, 2, 3...
+  /// @param shelterLevel 1, 2 or 3.
+  /// @param shelterIndex 0, 1, 2 ...
+  function packShelterId(uint8 biome, uint8 shelterLevel, uint8 shelterIndex) internal pure returns (uint) {
+    return uint(biome) | (uint(shelterLevel) << 8) | (uint(shelterIndex) << 16);
+  }
+
+  function unpackShelterId(uint shelterId) internal pure returns (uint8 biome, uint8 shelterLevel, uint8 shelterIndex) {
+    return (uint8(shelterId), uint8(shelterId >> 8), uint8(shelterId >> 16));
+  }
+  //endregion ------------------------------------ Guilds
+
+  //region ------------------------------------ Metadata of IItemController.OtherSubtypeKind
+
+  function getOtherItemTypeKind(bytes memory packedData) internal pure returns (IItemController.OtherSubtypeKind) {
+    bytes32 serialized;
+    assembly {
+      serialized := mload(add(packedData, 32))
+    }
+    uint8 kind = uint8(uint(serialized));
+    if (kind == 0 || kind >= uint8(IItemController.OtherSubtypeKind.END_SLOT)) revert IAppErrors.IncorrectOtherItemTypeKind(kind);
+    return IItemController.OtherSubtypeKind(kind);
+  }
+
+  function packOtherItemReduceFragility(uint value) internal pure returns (bytes memory packedData) {
+    bytes32 serialized = bytes32(uint(uint8(IItemController.OtherSubtypeKind.REDUCE_FRAGILITY_1)));
+    serialized |= bytes32(uint(uint248(value))) << 8;
+    return bytes.concat(serialized);
+  }
+
+  function unpackOtherItemReduceFragility(bytes memory packedData) internal pure returns (uint) {
+    bytes32 serialized;
+    assembly {
+      serialized := mload(add(packedData, 32))
+    }
+    uint8 kind = uint8(uint(serialized));
+    if (kind != uint8(IItemController.OtherSubtypeKind.REDUCE_FRAGILITY_1)) revert IAppErrors.IncorrectOtherItemTypeKind(kind);
+    uint value = uint248(uint(serialized) >> 8);
+    return value;
+  }
+  //endregion ------------------------------------ Metadata of IItemController.OtherSubtypeKind
 }

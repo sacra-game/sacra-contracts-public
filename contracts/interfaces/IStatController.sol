@@ -2,6 +2,7 @@
 
 pragma solidity 0.8.23;
 import "../openzeppelin/EnumerableSet.sol";
+import "../openzeppelin/EnumerableMap.sol";
 
 interface IStatController {
 
@@ -19,8 +20,13 @@ interface IStatController {
     /// @dev heroAdr+heroId => busy slots uint8[] packed
     mapping(bytes32 => bytes32) heroBusySlots;
     mapping(bytes32 => EnumerableSet.AddressSet) usedConsumables;
-    mapping(bytes32 => mapping(bytes32 => uint)) heroCustomData;
+    /// @dev heroCustomDataV2 is used instead
+    mapping(bytes32 => mapping(bytes32 => uint)) _deprecated_heroCustomData;
     mapping(bytes32 => uint) globalCustomData;
+
+    /// @notice packNftIdWithValue(hero, heroId, ngLevel) => hero custom data map
+    /// @dev initially it was packedHero => hero custom data map
+    mapping(bytes32 => EnumerableMap.Bytes32ToUintMap) heroCustomDataV2;
   }
 
 
@@ -236,4 +242,10 @@ interface IStatController {
 
   function setGlobalCustomData(bytes32 index, uint value) external;
 
+  /// @notice Restore life and mana during reinforcement
+  /// @dev Life and mana will be increased on ((current life/mana attr value) - (prev life/mana attr value))
+  /// @param prevAttributes Hero attributes before reinforcement
+  function restoreLifeAndMana(address heroToken, uint heroTokenId, int32[] memory prevAttributes) external;
+
+  function reborn(address heroToken, uint heroTokenId, uint heroClass) external;
 }

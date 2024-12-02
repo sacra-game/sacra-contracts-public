@@ -28,9 +28,6 @@ library CalcLib {
   }
 
   function toUint(int32 n) internal pure returns (uint) {
-    if (n < 0) {
-      return 0;
-    }
     if (n <= 0) {
       return 0;
     }
@@ -49,8 +46,27 @@ library CalcLib {
     if (maxValue == 0) {
       return 0;
     }
+
+    uint salt = genSalt();
     // pseudo random number
-    return (uint(keccak256(abi.encodePacked(blockhash(block.number), block.coinbase, block.difficulty, block.number, block.timestamp, tx.gasprice, gasleft()))) % (maxValue + 1));
+    return (uint(keccak256(abi.encodePacked(blockhash(block.number), block.coinbase, block.difficulty, block.number, block.timestamp, tx.gasprice, gasleft(), salt))) % (maxValue + 1));
+  }
+
+  function genSalt() internal view returns (uint salt) {
+    // skale has a RNG Endpoint
+    if (
+      block.chainid == uint(1351057110)
+      || block.chainid == uint(37084624)
+    ) {
+      assembly {
+        let freemem := mload(0x40)
+        let start_addr := add(freemem, 0)
+        if iszero(staticcall(gas(), 0x18, 0, 0, start_addr, 32)) {
+          invalid()
+        }
+        salt := mload(freemem)
+      }
+    }
   }
 
   function pseudoRandomUint32(uint32 maxValue) internal view returns (uint32) {
@@ -87,8 +103,9 @@ library CalcLib {
     if (maxValue == 0) {
       return 0;
     }
+    uint salt = genSalt();
     // pseudo random number
-    return (uint(keccak256(abi.encodePacked(blockhash(block.number), block.coinbase, block.difficulty, block.number, block.timestamp, tx.gasprice, gasleft(), seed))) % (maxValue + 1));
+    return (uint(keccak256(abi.encodePacked(blockhash(block.number), block.coinbase, block.difficulty, block.number, block.timestamp, tx.gasprice, gasleft(), seed, salt))) % (maxValue + 1));
   }
 
   /// @dev Simplified pseudo-random for minor functionality, in range

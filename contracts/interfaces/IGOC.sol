@@ -136,7 +136,9 @@ interface IGOC {
 
   struct MultiplierInfo {
     uint8 biome;
-    uint totalSupply;
+    /// @notice NG_LEVEL of the hero who is going to fight with the given monster
+    /// Use type(uint8).max for !NG+
+    uint8 heroNgLevel;
   }
 
   struct GeneratedMonster {
@@ -174,6 +176,7 @@ interface IGOC {
     uint8 biome;
     uint8 objectSubType;
     uint8 stageId;
+    uint8 heroNgLevel;
     uint32 objectId;
     uint64 dungeonId;
     uint heroTokenId;

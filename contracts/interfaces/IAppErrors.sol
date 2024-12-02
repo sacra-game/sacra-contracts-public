@@ -1,13 +1,120 @@
 // SPDX-License-Identifier: BUSL-1.1
-
 pragma solidity 0.8.23;
 
 /// @notice All errors of the app
 interface IAppErrors {
+
+  //region ERC20Errors
+  /**
+     * @dev Indicates an error related to the current `balance` of a `sender`. Used in transfers.
+     * @param sender Address whose tokens are being transferred.
+     * @param balance Current balance for the interacting account.
+     * @param needed Minimum amount required to perform a transfer.
+     */
+  error ERC20InsufficientBalance(address sender, uint256 balance, uint256 needed);
+
+  /**
+     * @dev Indicates a failure with the token `sender`. Used in transfers.
+     * @param sender Address whose tokens are being transferred.
+     */
+  error ERC20InvalidSender(address sender);
+
+  /**
+     * @dev Indicates a failure with the token `receiver`. Used in transfers.
+     * @param receiver Address to which tokens are being transferred.
+     */
+  error ERC20InvalidReceiver(address receiver);
+
+  /**
+     * @dev Indicates a failure with the `spender`’s `allowance`. Used in transfers.
+     * @param spender Address that may be allowed to operate on tokens without being their owner.
+     * @param allowance Amount of tokens a `spender` is allowed to operate with.
+     * @param needed Minimum amount required to perform a transfer.
+     */
+  error ERC20InsufficientAllowance(address spender, uint256 allowance, uint256 needed);
+
+  /**
+     * @dev Indicates a failure with the `approver` of a token to be approved. Used in approvals.
+     * @param approver Address initiating an approval operation.
+     */
+  error ERC20InvalidApprover(address approver);
+
+  /**
+   * @dev Indicates a failure with the `spender` to be approved. Used in approvals.
+     * @param spender Address that may be allowed to operate on tokens without being their owner.
+     */
+  error ERC20InvalidSpender(address spender);
+
+  //endregion ERC20Errors
+
+  //region ERC721Errors
+
+  /**
+  * @dev Indicates that an address can't be an owner. For example, `address(0)` is a forbidden owner in ERC-20.
+     * Used in balance queries.
+     * @param owner Address of the current owner of a token.
+     */
+  error ERC721InvalidOwner(address owner);
+
+  /**
+   * @dev Indicates a `tokenId` whose `owner` is the zero address.
+     * @param tokenId Identifier number of a token.
+     */
+  error ERC721NonexistentToken(uint256 tokenId);
+
+  /**
+   * @dev Indicates an error related to the ownership over a particular token. Used in transfers.
+     * @param sender Address whose tokens are being transferred.
+     * @param tokenId Identifier number of a token.
+     * @param owner Address of the current owner of a token.
+     */
+  error ERC721IncorrectOwner(address sender, uint256 tokenId, address owner);
+
+  /**
+   * @dev Indicates a failure with the token `sender`. Used in transfers.
+     * @param sender Address whose tokens are being transferred.
+     */
+  error ERC721InvalidSender(address sender);
+
+  /**
+   * @dev Indicates a failure with the token `receiver`. Used in transfers.
+     * @param receiver Address to which tokens are being transferred.
+     */
+  error ERC721InvalidReceiver(address receiver);
+
+  /**
+   * @dev Indicates a failure with the `operator`’s approval. Used in transfers.
+     * @param operator Address that may be allowed to operate on tokens without being their owner.
+     * @param tokenId Identifier number of a token.
+     */
+  error ERC721InsufficientApproval(address operator, uint256 tokenId);
+
+  /**
+   * @dev Indicates a failure with the `approver` of a token to be approved. Used in approvals.
+     * @param approver Address initiating an approval operation.
+     */
+  error ERC721InvalidApprover(address approver);
+
+  /**
+   * @dev Indicates a failure with the `operator` to be approved. Used in approvals.
+     * @param operator Address that may be allowed to operate on tokens without being their owner.
+     */
+  error ERC721InvalidOperator(address operator);
+
+  //endregion ERC721Errors
+
   error ZeroAddress();
   error ZeroValueNotAllowed();
+  error ZeroToken();
   error LengthsMismatch();
   error NotEnoughBalance();
+  error NotEnoughAllowance();
+  error EmptyNameNotAllowed();
+  error NotInitialized();
+  error AlreadyInitialized();
+  error ReentrancyGuardReentrantCall();
+  error TooLongString();
+  error AlreadyDeployed(address deployed);
 
   //region Restrictions
   error ErrorNotDeployer(address sender);
@@ -16,25 +123,50 @@ interface IAppErrors {
   error ErrorOnlyEoa();
   error NotEOA(address sender);
   error ErrorForbidden(address sender);
+  error AdminOnly();
   error ErrorNotItemController(address sender);
   error ErrorNotHeroController(address sender);
   error ErrorNotDungeonFactory(address sender);
   error ErrorNotObjectController(address sender);
+  error ErrorNotStoryController();
+  error ErrorNotAllowedSender();
+  error MintNotAllowed();
   //endregion Restrictions
+
+  //region PackingLib
+  error TooHighValue(uint value);
+  error IntValueOutOfRange(int value);
+  error OutOfBounds(uint index, uint length);
+  error UnexpectedValue(uint expected, uint actual);
+  error WrongValue(uint newValue, uint actual);
+  error IntOutOfRange(int value);
+  error ZeroValue();
+  /// @notice packCustomDataChange requires an input string with two zero bytes at the beginning
+  ///         0xXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX0000
+  /// This error happens if these bytes are not zero
+  error IncompatibleInputString();
+  error IncorrectOtherItemTypeKind(uint8 kind);
+  //endregion PackingLib
 
   //region Hero
   error ErrorHeroIsNotRegistered(address heroToken);
   error ErrorHeroIsDead(address heroToken, uint heroTokenId);
   error ErrorHeroNotInDungeon();
   error HeroInDungeon();
-  error ErrorNotHeroOwner(address heroToken, address msgSender);
+  error ErrorNotOwner(address token, uint tokenId);
   error Staked(address heroToken, uint heroId);
-  error HeroTokensVaultAlreadySet();
   error NameTaken();
   error TooBigName();
   error WrongSymbolsInTheName();
   error NoPayToken(address token, uint payTokenAmount);
   error AlreadyHaveReinforcement();
+  /// @notice SIP-001 - Reinforcement requires 3 skills
+  error ErrorReinforcementRequiresThreeSkills();
+  error WrongTier(uint tier);
+  error NotEnoughNgLevel(uint8 ngLevel);
+  error NgpNotActive(address hero);
+  error RebornNotAllowed();
+  error AlreadyPrePaidHero();
   //endregion Hero
 
   //region Dungeon
@@ -57,13 +189,15 @@ interface IAppErrors {
   error ErrorItemNotInSlot();
   error ErrorConsumableItemIsUsed(address item);
   error ErrorCannotRemoveItemFromMap();
-  error ItemEquipped();
+  error ErrorCannotRemoveDataFromMap();
+  error EquippedItemsExist();
+  error ItemEquipped(address item, uint itemId);
   error ZeroItemMetaType();
+  error NotZeroOtherItemMetaType();
   error ZeroLevel();
   error ItemTypeChanged();
   error ItemMetaTypeChanged();
   error UnknownItem(address item);
-  error ItemIsAlreadyEquipped(address item);
   error ErrorEquipForbidden();
   error EquipForbiddenInDungeon();
   error TakeOffForbiddenInDungeon();
@@ -79,6 +213,19 @@ interface IAppErrors {
   error UseForbiddenZeroPayToken();
   error IncorrectMinMaxAttributeRange(int32 min, int32 max);
   error SameIdsNotAllowed();
+  error ZeroFragility();
+  error OtherTypeItemNotRepairable();
+  error NotOther();
+  error DoubleItemUsageForbidden(uint itemIndex, address[] items);
+  error ItemAlreadyUsedInSlot(address item, uint8 equippedSlot);
+  error WrongWayToRegisterItem();
+  error UnionItemNotFound(address item);
+  error WrongListUnionItemTokens(address item, uint countTokens, uint requiredCountTokens);
+  error UnknownUnionConfig(uint unionConfigId);
+  error UserHasNoKeyPass(address user, address keyPassItem);
+  error MaxValue(uint value);
+  error UnexpectedOtherItem(address item);
+  error NotExist();
   //endregion Items
 
   //region Stages
@@ -166,6 +313,7 @@ interface IAppErrors {
   error NotYourDebuffItem();
   error UnknownAttackType(uint attackType);
   error NotYourAttackItem();
+  /// @notice The skill item cannot be used because it doesn't belong either to the hero or to the hero's helper
   error NotYourBuffItem();
   //endregion MonsterLib
 
@@ -196,15 +344,18 @@ interface IAppErrors {
 
   //region Oracle
   error OracleWrongInput();
-  //region Oracle
+  //endregion Oracle
 
   //region ReinforcementController
   error AlreadyStaked();
   error MaxFee(uint8 fee);
+  error MinFee(uint8 fee);
   error StakeHeroNotStats();
   error NotStaked();
   error NoStakedHeroes();
-  //region ReinforcementController
+  error GuildHelperNotAvailable(uint guildId, address helper, uint helperId);
+  error HelperNotAvailableInGivenBiome();
+  //endregion ReinforcementController
 
   //region SponsoredHero
   error InvalidHeroClass();
@@ -240,4 +391,120 @@ interface IAppErrors {
   error UnknownHeroClass(uint heroClass);
   error AbsDiff(int32 a, int32 b);
   //region Misc
+
+  //region ------------------------ UserController
+  error NoAvailableLootBox(address msgSender, uint lootBoxKind);
+  error FameHallHeroAlreadyRegistered(uint8 openedNgLevel);
+
+  //endregion ------------------------ UserController
+
+  //region ------------------------ Guilds
+  error AlreadyGuildMember();
+  error NotGuildMember();
+  error WrongGuild();
+  error GuildActionForbidden(uint right);
+  error GuildHasMaxSize(uint guildSize);
+  error GuildHasMaxLevel(uint level);
+  error TooLongUrl();
+  error TooLongDescription();
+  error CannotRemoveGuildOwnerFromNotEmptyGuild();
+  error GuildControllerOnly();
+  error GuildAlreadyHasShelter();
+  error ShelterIsBusy();
+  error ShelterIsNotRegistered();
+  error ShelterIsNotOwnedByTheGuild();
+  error ShelterIsInUse();
+  error GuildHasNoShelter();
+  error ShelterBidIsNotAllowedToBeUsed();
+  error ShelterHasHeroesInside();
+  error SecondGuildAdminIsNotAllowed();
+  error NotEnoughGuildBankBalance(uint guildId);
+
+  error GuildReinforcementCooldownPeriod();
+  error NoStakedGuildHeroes();
+  error NotStakedInGuild();
+  error ShelterHasNotEnoughLevelForReinforcement();
+  error NotBusyGuildHelper();
+
+  error GuildRequestNotActive();
+  error GuildRequestNotAvailable();
+  error NotAdminCannotAddMemberWithNotZeroRights();
+  //endregion ------------------------ Guilds
+
+  //region ------------------------ Shelters
+  error ErrorNotShelterController();
+  error ErrorNotGuildController();
+  error ShelterHasNotItem(uint shelterId, address item);
+  error MaxNumberItemsSoldToday(uint numSoldItems, uint limit);
+  error GuildHasNotEnoughPvpPoints(uint64 pointsAvailable, uint pointRequired);
+  error FreeShelterItemsAreNotAllowed(uint shelterId, address item);
+  error TooLowShelterLevel(uint8 shelterLevel, uint8 allowedShelterLevel);
+  error NotEnoughPvpPointsCapacity(address user, uint usedPoints, uint pricePvpPoints, uint64 capactiy);
+  error IncorrectShelterLevel(uint8 shelterLevel);
+  //endregion ------------------------ Shelters
+
+  //region ------------------------ Auction
+  error WrongAuctionPosition();
+  error AuctionPositionClosed();
+  error AuctionBidOpened(uint positionId);
+  error TooLowAmountToBid();
+  error AuctionEnded();
+  error TooLowAmountForNewBid();
+  error AuctionSellerOnly();
+  error AuctionBuyerOnly();
+  error AuctionBidNotFound();
+  error AuctionBidClosed();
+  error OnlyShelterAuction();
+  error CannotCloseLastBid();
+  error AuctionNotEnded();
+  error NotShelterAuction();
+  error AuctionPositionOpened(uint positionId);
+  error AuctionSellerCannotBid();
+  error CannotApplyNotLastBid();
+  error AuctionGuildWithShelterCannotBid();
+  //endregion ------------------------ Auction
+
+  //region ------------------------ Pawnshop
+  error AuctionPositionNotSupported(uint positionId);
+  error PositionNotSupported(uint positionId);
+  error NotNftPositionNotSupported(uint positionId);
+  error CallFailed(bytes callResultData);
+
+  error PawnShopZeroOwner();
+  error PawnShopZeroFeeRecipient();
+  error PawnShopNotOwner();
+  error PawnShopAlreadyAnnounced();
+  error PawnShopTimeLock();
+  error PawnShopWrongAddressValue();
+  error PawnShopWrongUintValue();
+  error PawnShopZeroAddress();
+  error PawnShopTooHighValue();
+  error PawnShopZeroAToken();
+  error PawnShopZeroCToken();
+  error PawnShopWrongAmounts();
+  error PawnShopPosFeeForInstantDealForbidden();
+  error PawnShopPosFeeAbsurdlyHigh();
+  error PawnShopIncorrect();
+  error PawnShopWrongId();
+  error PawnShopNotBorrower();
+  error PawnShopPositionClosed();
+  error PawnShopPositionExecuted();
+  error PawnShopWrongBidAmount();
+  error PawnShopTooLowBid();
+  error PawnShopNewBidTooLow();
+  error PawnShopBidAlreadyExists();
+  error PawnShopAuctionEnded();
+  error PawnShopNotLender();
+  error PawnShopTooEarlyToClaim();
+  error PawnShopPositionNotExecuted();
+  error PawnShopAlreadyClaimed();
+  error PawnShopAuctionNotEnded();
+  error PawnShopBidClosed();
+  error PawnShopNoBids();
+  error PawnShopAuctionBidNotFound();
+  error PawnShopWrongBid();
+  error PawnShopBidNotFound();
+
+  //endregion ------------------------ Pawnshop
 }
+

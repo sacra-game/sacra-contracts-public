@@ -28,15 +28,15 @@ contract StatReader {
     return StatLib.levelExperience(level);
   }
 
-  function minDamage(int32 strength, uint heroClass) external pure returns (int32) {
+  function minDamage(int32 strength, uint heroClass) external view returns (int32) {
     return StatLib.minDamage(strength, heroClass);
   }
 
   function experienceToLvl(uint exp, uint startFromLevel) external pure returns (uint) {
-    return StatLib.experienceToLvl(exp, startFromLevel);
+    return StatLib.experienceToVirtualLevel(exp, startFromLevel);
   }
 
-  function startHeroAttributes(uint heroClass) external pure returns (
+  function startHeroAttributes(uint heroClass) external view returns (
     IStatController.CoreAttributes memory,
     StatLib.BaseMultiplier memory,
     StatLib.LevelUp memory
@@ -45,7 +45,7 @@ contract StatReader {
     return (h.core, h.multiplier, h.levelUp);
   }
 
-  function baseLifeChances(uint heroClass) external pure returns(int32) {
+  function baseLifeChances(uint heroClass) external view returns(int32) {
     return StatLib.initialHero(heroClass).baseLifeChances;
   }
 }

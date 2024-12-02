@@ -1,26 +1,30 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.23;
 
-import "../openzeppelin/EnumerableMap.sol";
-import "../interfaces/IERC20.sol";
-import "../interfaces/IERC721.sol";
-import "../interfaces/IController.sol";
-import "../interfaces/IStatController.sol";
-import "../interfaces/IStoryController.sol";
-import "../interfaces/IDungeonFactory.sol";
-import "../interfaces/IGameToken.sol";
-import "../interfaces/IMinter.sol";
 import "../interfaces/IAppErrors.sol";
 import "../interfaces/IApplicationEvents.sol";
-import "../interfaces/IReinforcementController.sol";
+import "../interfaces/IController.sol";
+import "../interfaces/IDungeonFactory.sol";
+import "../interfaces/IERC20.sol";
+import "../interfaces/IERC721.sol";
 import "../interfaces/IFightCalculator.sol";
 import "../interfaces/IGOC.sol";
-import "../interfaces/IItemController.sol";
+import "../interfaces/IGameToken.sol";
 import "../interfaces/IHeroController.sol";
-import "./PackingLib.sol";
+import "../interfaces/IItemController.sol";
+import "../interfaces/IMinter.sol";
+import "../interfaces/IReinforcementController.sol";
+import "../interfaces/IStatController.sol";
+import "../interfaces/IStoryController.sol";
+import "../interfaces/IUserController.sol";
+import "../openzeppelin/EnumerableMap.sol";
+import "./AppLib.sol";
 import "./CalcLib.sol";
-import "./StatLib.sol";
 import "./ControllerContextLib.sol";
+import "./PackingLib.sol";
+import "./RewardsPoolLib.sol";
+import "./StatControllerLib.sol";
+import "./StatLib.sol";
 
 library DungeonLib {
   using EnumerableMap for EnumerableMap.AddressToUintMap;
@@ -94,25 +98,29 @@ library DungeonLib {
   /// @param token Treasury token
   /// @param maxAvailableBiome Max deployed biome
   /// @param treasuryBalance Total treasury of the dungeon
-  /// @param heroLevel Current level of the hero
+  /// @param lvlForMint Current level of the hero
   /// @param dungeonBiome Biome to which the dungeon belongs
+  /// @param maxOpenedNgLevel Max NG_LEVEL reached by any user
+  /// @param heroNgLevel Current NG_LEVEL of the user
   function dungeonTreasuryReward(
     address token,
     uint maxAvailableBiome,
     uint treasuryBalance,
-    uint heroLevel,
-    uint dungeonBiome
+    uint lvlForMint,
+    uint dungeonBiome,
+    uint maxOpenedNgLevel,
+    uint heroNgLevel
   ) internal view returns (uint) {
-    if (dungeonBiome < maxAvailableBiome) {
+    if (dungeonBiome < maxAvailableBiome || heroNgLevel < maxOpenedNgLevel) {
       return 0;
     }
 
     uint customMinLevel = _S().minLevelForTreasury[token];
-    if (customMinLevel != 0 && heroLevel < customMinLevel) {
+    if (customMinLevel != 0 && lvlForMint < customMinLevel) {
       return 0;
     }
 
-    if (heroLevel > StatLib.MAX_LEVEL) revert IAppErrors.ErrorWrongLevel(heroLevel);
+    if (lvlForMint > StatLib.MAX_LEVEL) revert IAppErrors.ErrorWrongLevel(lvlForMint);
     if (dungeonBiome > StatLib.MAX_POSSIBLE_BIOME) revert IAppErrors.ErrorIncorrectBiome(dungeonBiome);
 
     uint biomeLevel = dungeonBiome * StatLib.BIOME_LEVEL_STEP;
@@ -123,9 +131,9 @@ library DungeonLib {
     if (multiplier >= 1e18) revert IAppErrors.ErrorWrongMultiplier(multiplier);
     uint base = treasuryBalance * multiplier / 1e18;
 
-    if (biomeLevel < heroLevel) {
+    if (biomeLevel < lvlForMint) {
       // reduce base on biome difference
-      base = base / 2 ** (heroLevel - biomeLevel);
+      base = base / 2 ** (lvlForMint - biomeLevel + 10);
     }
     return base;
   }
@@ -202,7 +210,14 @@ library DungeonLib {
     );
 
     if (c.isBattleObj) {
-      _markSkillSlotsForDurabilityReduction(_S(), c.statController, c.data, c.heroToken, c.heroTokenId);
+      _markSkillSlotsForDurabilityReduction(
+        _S(),
+        c.statController,
+        ControllerContextLib.getItemController(cc),
+        c.data,
+        c.heroToken,
+        c.heroTokenId
+      );
     }
 
     c.stats = c.statController.heroStats(c.heroToken, c.heroTokenId);
@@ -228,7 +243,17 @@ library DungeonLib {
       } else {
         _afterObjCompleteForSurvivedHero(c, cc);
         _reduceLifeChances(c.statController, c.heroToken, c.heroTokenId, c.stats.life, c.stats.mana);
+
+        // scb-1000: soft death resets used consumables
+        c.statController.clearUsedConsumables(c.heroToken, c.heroTokenId);
+        // also soft death reset all buffs
+        c.statController.clearTemporallyAttributes(c.heroToken, c.heroTokenId);
       }
+
+      // scb-994: increment death count counter
+      uint deathCounter = c.statController.heroCustomData(c.heroToken, c.heroTokenId, StatControllerLib.DEATH_COUNT_HASH);
+      c.statController.setHeroCustomData(c.heroToken, c.heroTokenId, StatControllerLib.DEATH_COUNT_HASH, deathCounter + 1);
+
       clear = true;
     } else {
       _increaseChangeableStats(c.statController, c.heroToken, c.heroTokenId, c.result);
@@ -243,6 +268,30 @@ library DungeonLib {
 
     emit IApplicationEvents.ObjectAction(c.dungId, c.result, c.currentStage, c.heroToken, c.heroTokenId, newStage);
     return (isCompleted, newStage, currentObject, clear);
+  }
+
+  /// @notice Hero exists current dungeon forcibly same as when dying but without loosing life chance and keeping all items equipped
+  /// @dev Dungeon state is cleared outside
+  function exitForcibly(
+    address heroToken,
+    uint heroTokenId,
+    IDungeonFactory.DungeonStatus storage dungStatus,
+    IDungeonFactory.DungeonAttributes storage dungAttributes,
+    ControllerContextLib.ControllerContext memory cc
+  ) internal {
+    _changeCurrentDungeon(_S(), heroToken, heroTokenId, 0);
+    IHeroController hc = ControllerContextLib.getHeroController(cc);
+    IStatController sc = ControllerContextLib.getStatController(cc);
+
+    hc.releaseReinforcement(heroToken, heroTokenId);
+    _resetUniqueObjects(dungStatus, dungAttributes);
+
+    // equipped items are NOT taken off
+    // life => 1, mana => 0
+    hc.resetLifeAndMana(heroToken, heroTokenId);
+
+    sc.clearUsedConsumables(heroToken, heroTokenId);
+    sc.clearTemporallyAttributes(heroToken, heroTokenId);
   }
 
   //endregion ------------------------ Main logic
@@ -273,8 +322,11 @@ library DungeonLib {
     bytes32[] storage treasuryItems
   ) internal {
     (bytes32[] memory drop) = heroController.kill(heroToken, heroTokenId);
+    _putHeroItemToDungeon(dungId, drop, treasuryItems);
+  }
 
-    // all hero's items are taken by the dungeon
+  /// @notice All hero's items are taken by the dungeon
+  function _putHeroItemToDungeon(uint64 dungId, bytes32[] memory drop, bytes32[] storage treasuryItems) internal {
     uint dropLength = drop.length;
     for (uint i; i < dropLength; ++i) {
       treasuryItems.push(drop[i]);
@@ -291,7 +343,7 @@ library DungeonLib {
   ) internal {
     if (context.isBattleObj) {
       // reduce equipped items durability
-      ControllerContextLib.getItemController(cc).reduceDurability(context.heroToken, context.heroTokenId, uint8(context.biome));
+      ControllerContextLib.getItemController(cc).reduceDurability(context.heroToken, context.heroTokenId, uint8(context.biome), false);
       // clear temporally attributes
       context.statController.clearTemporallyAttributes(context.heroToken, context.heroTokenId);
     }
@@ -317,7 +369,18 @@ library DungeonLib {
     uint len = context.result.rewriteNextObject.length;
 
     if (context.currentStage + 1 >= curStages && len == 0) {
-      _mintGameTokens(context.dungId, cc, context.stats.level, context.biome, treasuryTokens);
+      // if we have reduced drop then do not mint token at all
+      if (StatLib.mintDropChanceDelta(context.stats.experience, context.stats.level, context.biome) == 0) {
+        _mintGameTokens(
+          context.dungId,
+          cc,
+          StatLib.getVirtualLevel(context.stats.experience, context.stats.level, true),
+          context.biome,
+          treasuryTokens,
+          context.heroToken,
+          context.heroTokenId
+        );
+      }
       isCompleted = true;
     } else {
       // need to extend stages for new rewrite objects size
@@ -389,19 +452,31 @@ library DungeonLib {
     }
   }
 
-  /// @notice Reduce life to 1, decrease lifeChances on 1, set mana to 0
-  function _reduceLifeChances(IStatController statController, address heroToken, uint heroTokenId, uint32 curLife, uint32 curMana) internal {
+  /// @notice Decrease lifeChances on 1, restore life and mana to full
+  function _reduceLifeChances(IStatController statController, address hero, uint heroId, uint32 curLife, uint32 curMana) internal {
+    uint32 lifeFull = uint32(CalcLib.toUint(statController.heroAttribute(hero, heroId, uint(IStatController.ATTRIBUTES.LIFE))));
+    uint32 manaFull = uint32(CalcLib.toUint(statController.heroAttribute(hero, heroId, uint(IStatController.ATTRIBUTES.MANA))));
+
+    // --------- reduce life chance
     statController.changeCurrentStats(
-      heroToken,
-      heroTokenId,
+      hero,
+      heroId,
+      IStatController.ChangeableStats({level: 0, experience: 0, life: 0, mana: 0, lifeChances: 1}),
+      false
+    );
+
+    // --------- restore life and mana to full
+    statController.changeCurrentStats(
+      hero,
+      heroId,
       IStatController.ChangeableStats({
         level: 0,
         experience: 0,
-        life: uint32(curLife - 1),
-        mana: uint32(curMana),
-        lifeChances: 1
+        life: AppLib.sub0(lifeFull, curLife),
+        mana: AppLib.sub0(manaFull, curMana),
+        lifeChances: 0
       }),
-      false
+      true
     );
   }
 
@@ -430,12 +505,27 @@ library DungeonLib {
   function _mintGameTokens(
     uint64 dungId,
     ControllerContextLib.ControllerContext memory cc,
-    uint heroLevel,
+    uint lvlForMint,
     uint biome,
-    EnumerableMap.AddressToUintMap storage treasuryTokens
+    EnumerableMap.AddressToUintMap storage treasuryTokens,
+    address hero,
+    uint heroId
   ) private {
+    IHeroController heroController = ControllerContextLib.getHeroController(cc);
+    uint maxOpenedNgLevel = heroController.maxOpenedNgLevel();
+    uint heroNgLevel = heroController.getHeroInfo(hero, heroId).ngLevel;
+
     IGameToken gameToken = ControllerContextLib.getGameToken(cc);
-    uint amount = IMinter(gameToken.minter()).mintDungeonReward(dungId, biome, heroLevel);
+    uint amount = IMinter(gameToken.minter()).mintDungeonReward(dungId, biome, lvlForMint);
+    // Total amount of rewards should be equal to: reward = normal_reward * (1 + NG_LVL) / ng_sum
+    // We have minted {amount}, so we should burn off {amount - reward}.
+    // {amount} is exactly equal to {reward} only if NG_LVL is 0
+    uint reward = amount * (1 + heroNgLevel) / RewardsPoolLib.getNgSum(maxOpenedNgLevel);
+    if (amount > reward) {
+      gameToken.burn(amount - reward);
+      amount = reward;
+    }
+    
     _registerTreasuryToken(address(gameToken), treasuryTokens, amount);
     emit IApplicationEvents.AddTreasuryToken(dungId, address(gameToken), amount);
   }
@@ -610,7 +700,7 @@ library DungeonLib {
 
     if (!dungStatus.isCompleted) revert IAppErrors.ErrorNotCompleted();
     if (controller.onPause()) revert IAppErrors.ErrorPaused();
-    if (IERC721(heroToken).ownerOf(heroTokenId) != msgSender) revert IAppErrors.ErrorNotHeroOwner(heroToken, msgSender);
+    if (IERC721(heroToken).ownerOf(heroTokenId) != msgSender) revert IAppErrors.ErrorNotOwner(heroToken, heroTokenId);
     if (_S().heroCurrentDungeon[heroToken.packNftId(heroTokenId)] != dungId) revert IAppErrors.ErrorHeroNotInDungeon();
 
     IHeroController heroController = ControllerContextLib.getHeroController(cc);
@@ -626,6 +716,12 @@ library DungeonLib {
     if (payToken == address(0)) {
       // F2P hero doesn't have pay token, he is destroyed after exit of the dungeon
       _killHero(heroController, dungId, heroToken, heroTokenId, dungStatus.treasuryItems);
+    }
+
+    // register daily activity
+    address userController = controller.userController();
+    if (userController != address(0)) {
+      IUserController(userController).registerPassedDungeon(msgSender);
     }
 
     emit IApplicationEvents.Exit(dungId, claim);
@@ -698,10 +794,12 @@ library DungeonLib {
   /// @notice Generate map[3] for SKILL_1, SKILL_2, SKILL_3 (0 - not marked, 1 - marked)
   ///         and save the map to {s_}._skillSlotsForDurabilityReduction as packed uint8[]
   /// @dev mark skill slots for durability reduction
+  /// SIP-001: take into account hero's skills only and ignore skills of the helper
   /// @param data abi.encoded IFightCalculator.AttackInfo
   function _markSkillSlotsForDurabilityReduction(
     IDungeonFactory.MainState storage s_,
-    IStatController statCtr,
+    IStatController sc,
+    IItemController itemController,
     bytes memory data,
     address heroToken,
     uint heroTokenId
@@ -713,18 +811,22 @@ library DungeonLib {
 
     if (length != 0 || attackInfo.attackToken != address(0)) {
 
-      (address[3] memory skillSlotAdr, uint[3] memory skillSlotIds) = _getSkillSlotsForHero(statCtr, heroToken, heroTokenId);
+      (address[3] memory skillSlotAdr, uint[3] memory skillSlotIds) = _getSkillSlotsForHero(sc, heroToken, heroTokenId);
 
       for (uint i; i < length; ++i) {
         address token = attackInfo.skillTokens[i];
         uint tokenId = attackInfo.skillTokenIds[i];
 
-        if (token == skillSlotAdr[0] && tokenId == skillSlotIds[0]) {
-          map[0] = 1;
-        } else if (token == skillSlotAdr[1] && tokenId == skillSlotIds[1]) {
-          map[1] = 1;
-        } else if (token == skillSlotAdr[2] && tokenId == skillSlotIds[2]) {
-          map[2] = 1;
+        // The hero is able to use own skills OR the skills of the helper. Take into account only own hero's skills here
+        (address h,) = itemController.equippedOn(token, tokenId);
+        if (h == heroToken) {
+          if (token == skillSlotAdr[0] && tokenId == skillSlotIds[0]) {
+            map[0] = 1;
+          } else if (token == skillSlotAdr[1] && tokenId == skillSlotIds[1]) {
+            map[1] = 1;
+          } else if (token == skillSlotAdr[2] && tokenId == skillSlotIds[2]) {
+            map[2] = 1;
+          }
         }
       }
 
@@ -808,7 +910,7 @@ library DungeonLib {
     if (amount != 0) {
 
       if (context.heroPayToken == address(0)) {
-        if (token == address(ControllerContextLib.getGameToken(cc)) ) {
+        if (token == address(ControllerContextLib.getGameToken(cc))) {
           IGameToken(token).burn(amount);
         } else {
           IERC20(token).transfer(address(cc.controller), amount);

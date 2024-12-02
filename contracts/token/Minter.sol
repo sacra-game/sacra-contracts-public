@@ -47,6 +47,7 @@ contract Minter is IMinter {
 
   uint private constant _MIN_BASE = 1;
   uint private constant _TOTAL_SUPPLY_BASE = 10_000_000e18;
+  address private constant DEAD_ADDRESS_TO_BURN = 0x000000000000000000000000000000000000dEaD;
   //endregion ------------------------ Constants
 
   //region ------------------------ Variables
@@ -55,6 +56,9 @@ contract Minter is IMinter {
   IGameToken public immutable token;
   mapping(uint64 => bool) public dungeonMinted;
   bool public finalized;
+  /// @notice Token for which you can exchange the game token
+  address public myrdToken;
+
   //endregion ------------------------ Variables
 
   //region ------------------------ Constructors
@@ -127,4 +131,25 @@ contract Minter is IMinter {
     finalized = true;
   }
   //endregion ------------------------ Gov actions
+
+  //region ------------------------ Minting in exchange of MYRD-token
+
+  function setMyrdToken(address myrdToken_) external {
+    onlyGovernance();
+    if (myrdToken != address(0)) revert IAppErrors.AlreadyInitialized();
+
+    myrdToken = myrdToken_;
+  }
+
+  /// @notice Mint game token in exchange to {myrdToken}, rate 1:1
+  /// @param amount Amount to mint. Assume, that the same {amount} of {myrdToken} is approved by the msg.sender
+  function mintForMyrd(uint amount) external {
+    if (myrdToken == address(0)) revert IAppErrors.NotInitialized();
+
+    if (amount != 0) {
+      IERC20(myrdToken).transferFrom(msg.sender, DEAD_ADDRESS_TO_BURN, amount);
+      token.mint(msg.sender, amount);
+    }
+  }
+  //endregion ------------------------ Minting in exchange of MYRD-token
 }

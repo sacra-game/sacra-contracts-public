@@ -165,15 +165,14 @@ library EventLib {
       ItemLib.MintItemInfo({
         mintItems: mintItems,
         mintItemsChances: mintItemsChances,
-        biome: ctx.biome,
         amplifier: 0,
         seed: 0,
         oracle: oracle,
-        heroExp: stats.experience,
-        heroCurrentLvl: uint8(stats.level),
         magicFind: 0,
         destroyItems: 0,
-        maxItems: 1 // MINT ONLY 1 ITEM!
+        maxItems: 1, // MINT ONLY 1 ITEM!
+        mintDropChanceDelta: StatLib.mintDropChanceDelta(stats.experience, uint8(stats.level), ctx.biome),
+        mintDropChanceNgLevelMultiplier: 1e18
       }),
       nextPrng_
     );

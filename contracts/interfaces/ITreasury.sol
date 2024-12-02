@@ -9,7 +9,4 @@ interface ITreasury {
   function balanceOfToken(address token) external view returns (uint);
 
   function sendToDungeon(address dungeon, address token, uint amount) external;
-
-  function sendFee(address token, uint amount, IItemController.FeeType feeType) external;
-
 }

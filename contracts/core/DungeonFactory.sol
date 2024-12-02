@@ -96,17 +96,24 @@ contract DungeonFactory is Controllable, IDungeonFactory, ERC2771Context, ERC721
     return DungeonFactoryLib.freeDungeonsByLevel(id, biome);
   }
 
-  function dungeonTreasuryReward(address token, uint maxAvailableBiome, uint treasuryBalance, uint8 heroLevel, uint8 dungeonBiome)
-  external view returns (uint) {
-    return DungeonLib.dungeonTreasuryReward(token, maxAvailableBiome, treasuryBalance, heroLevel, dungeonBiome);
+  function dungeonTreasuryReward(
+    address token,
+    uint maxAvailableBiome_,
+    uint treasuryBalance,
+    uint8 heroLevel,
+    uint8 dungeonBiome,
+    uint8 maxOpenedNgLevel,
+    uint8 heroNgLevel
+  ) external view returns (uint) {
+    return DungeonLib.dungeonTreasuryReward(token, maxAvailableBiome_, treasuryBalance, heroLevel, dungeonBiome, maxOpenedNgLevel, heroNgLevel);
   }
 
-  function getDungeonTreasuryAmount(address token, uint heroLevel, uint biome) external view returns (
+  function getDungeonTreasuryAmount(address token, uint heroLevel, uint biome, uint heroNgLevel) external view returns (
     uint totalAmount,
     uint amountForDungeon,
     uint mintAmount
   ) {
-    return DungeonFactoryLib.getDungeonTreasuryAmount(IController(controller()), token, heroLevel, biome);
+    return DungeonFactoryLib.getDungeonTreasuryAmount(IController(controller()), token, heroLevel, biome, heroNgLevel);
   }
 
   function getDungeonLogic(IController controller_, uint8 heroLevel, address heroToken, uint heroTokenId, uint random)
@@ -130,6 +137,10 @@ contract DungeonFactory is Controllable, IDungeonFactory, ERC2771Context, ERC721
   /// @dev Easily get info should given hero fight with boss in the current biome or not.
   function isBiomeBoss(address heroToken, uint heroTokenId) external view returns (bool) {
     return DungeonFactoryLib.isBiomeBoss(IController(controller()), heroToken, heroTokenId);
+  }
+
+  function maxAvailableBiome() external view returns (uint8) {
+    return DungeonFactoryLib.maxAvailableBiome();
   }
   //endregion ------------------------ VIEWS
 
@@ -162,7 +173,7 @@ contract DungeonFactory is Controllable, IDungeonFactory, ERC2771Context, ERC721
   function registerDungeonLogic(
     uint16 dungLogicId,
     uint8 biome,
-    DungeonGenerateInfo calldata genInfo,
+    DungeonGenerateInfo memory genInfo,
     uint8 specReqBiome,
     uint8 specReqHeroClass,
     bool isSpecific
@@ -210,4 +221,17 @@ contract DungeonFactory is Controllable, IDungeonFactory, ERC2771Context, ERC721
     DungeonFactoryLib.exit(_isNotSmartContract(), IController(controller()), _msgSender(), dungId, claim);
   }
   //endregion ------------------------ USER ACTIONS
+
+  //region ------------------------ Contracts actions
+
+  /// @notice Hero exists current dungeon forcibly same as when dying but without loosing life chance
+  /// @dev Implement logic of special consumable that allows a hero to exit current dungeon using the shelter
+  function exitForcibly(address heroToken, uint heroTokenId, address msgSender) override external {
+    DungeonFactoryLib.exitForcibly(IController(controller()), heroToken, heroTokenId, msgSender);
+  }
+
+  function reborn(address heroToken, uint heroTokenId) external override {
+    DungeonFactoryLib.reborn(IController(controller()), heroToken, heroTokenId);
+  }
+  //endregion ------------------------ Contracts actions
 }

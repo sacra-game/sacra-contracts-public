@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.23;
 
-import "./CalcLib.sol";
-import "./StatLib.sol";
-import "../interfaces/IOracle.sol";
-import "../interfaces/IItemController.sol";
-import "../interfaces/IItem.sol";
 import "../interfaces/IAppErrors.sol";
 import "../interfaces/IApplicationEvents.sol";
+import "../interfaces/IGuildController.sol";
+import "../interfaces/IItem.sol";
+import "../interfaces/IItemController.sol";
+import "../interfaces/IOracle.sol";
 import "../openzeppelin/Math.sol";
 import "../solady/LibPRNG.sol";
+import "./CalcLib.sol";
+import "./ControllerContextLib.sol";
+import "./ShelterLib.sol";
+import "./StatLib.sol";
 
 library ItemLib {
   using CalcLib for int32;
@@ -42,24 +45,47 @@ library ItemLib {
   }
 
   struct MintItemInfo {
-    uint8 biome;
-    uint8 heroCurrentLvl;
     uint8 maxItems;
-    IOracle oracle;
-    address[] mintItems;
     int32 magicFind;
     int32 destroyItems;
     uint32[] mintItemsChances;
-    uint32 heroExp;
+    IOracle oracle;
+    address[] mintItems;
     uint amplifier;
     uint seed;
+    /// @notice Penalty to reduce chance as chance/delta if the hero not in his biome
+    /// @dev Use StatLib.mintDropChanceDelta
+    uint mintDropChanceDelta;
+    /// @notice SCR-1064: drop chance depends on NG_LEVEL, decimals 18, value is in the range [0...1e18]
+    /// it's always 100% for NG0 (no reduce, value is 1e18)
+    /// Use {dropChancePercent} to calculate actual value
+    uint mintDropChanceNgLevelMultiplier;
   }
   //endregion ------------------------ Data types
+
+  //region ------------------------ Restrictions
+  /// @notice ensure that the user belongs to a guild, the guild has a shelter, the shelter has highest level 3
+  function _onlyMemberOfGuildWithShelterMaxLevel(IController controller, address msgSender) internal view {
+    // ensure that signer belongs to a guild and the guild has a shelter of ANY level
+    IGuildController gc = IGuildController(controller.guildController());
+
+    uint guildId = gc.memberOf(msgSender);
+    if (guildId == 0) revert IAppErrors.NotGuildMember();
+
+    uint shelterId = gc.guildToShelter(guildId);
+    if (shelterId == 0) revert IAppErrors.GuildHasNoShelter();
+
+    // only highest level of shelters gives possibility to exit from dungeon
+    (, uint8 shelterLevel,) = PackingLib.unpackShelterId(shelterId);
+    if (shelterLevel != ShelterLib.MAX_SHELTER_LEVEL) revert IAppErrors.TooLowShelterLevel(shelterLevel, ShelterLib.MAX_SHELTER_LEVEL);
+  }
+
+  //endregion ------------------------ Restrictions
 
   //region ------------------------ Main logic
 
   /// @notice Mint new item, setup attributes, make extra setup if necessary (setup attack item, buff item)
-  /// @param sender Dungeon Factory only is allowed
+  /// @param sender Dungeon Factory / User Controller / Guild Controller are allowed
   /// @param item Item to be minted
   /// @param recipient The item is minted for the given recipient
   /// @return itemId Id of the newly minted item
@@ -70,7 +96,21 @@ library ItemLib {
     address item,
     address recipient
   ) external returns (uint itemId) {
-    if (controller.dungeonFactory() != sender) revert IAppErrors.ErrorNotDungeonFactory(sender);
+    ControllerContextLib.ControllerContext memory ctx = ControllerContextLib.init(controller);
+
+    address guildController = address(ControllerContextLib.getGuildController(ctx));
+    address shelterController = guildController == address(0)
+      ? address(0)
+      : IGuildController(guildController).shelterController();
+
+    if (
+      address(ControllerContextLib.getDungeonFactory(ctx)) != sender
+      && address(ControllerContextLib.getUserController(ctx)) != sender
+      && guildController != sender
+      && shelterController != sender
+      && address(ControllerContextLib.getItemController(ctx)) != sender
+      && address(ControllerContextLib.getHeroController(ctx)) != sender
+    ) revert IAppErrors.MintNotAllowed();
 
     itemId = IItem(item).mintFor(recipient);
 
@@ -105,7 +145,55 @@ library ItemLib {
     return _mintRandomItems(info, CalcLib.nextPrng);
   }
 
+  function applyActionMasks(
+    uint actionMask,
+    IStatController statController,
+    IController controller,
+    address msgSender,
+    address heroToken,
+    uint heroTokenId
+  ) external {
+    if ((actionMask & (2 ** uint(IItemController.ConsumableActionBits.CLEAR_TEMPORARY_ATTRIBUTES_0))) != 0) {
+      statController.clearTemporallyAttributes(heroToken, heroTokenId);
+    }
+    if ((actionMask & (2 ** uint(IItemController.ConsumableActionBits.EXIT_FROM_DUNGEON_1))) != 0) {
+      _actionExitFromDungeon(controller, msgSender, heroToken, heroTokenId);
+    }
+    if ((actionMask & (2 ** uint(IItemController.ConsumableActionBits.REST_IN_SHELTER_3))) != 0) {
+      _actionRestInShelter(controller, statController, msgSender, heroToken, heroTokenId);
+    }
+  }
+
   //endregion ------------------------ Main logic
+
+  //region ------------------------ Consumable actions
+  /// @notice Exit from the dungeon: same to the death without reducing life chance
+  function _actionExitFromDungeon(IController controller, address msgSender, address heroToken, uint heroTokenId) internal {
+    _onlyMemberOfGuildWithShelterMaxLevel(controller, msgSender);
+
+    // exit from the dungeon ~ "soft kill"
+    IDungeonFactory(controller.dungeonFactory()).exitForcibly(heroToken, heroTokenId, msgSender);
+  }
+
+  /// @notice Rest in the shelter of 3d level: restore of hp & mp, clear temporally attributes, clear used consumables
+  function _actionRestInShelter(
+    IController controller,
+    IStatController statController,
+    address msgSender,
+    address heroToken,
+    uint heroTokenId
+  ) internal {
+    _onlyMemberOfGuildWithShelterMaxLevel(controller, msgSender);
+
+    // restore life and mana to default values from the total attributes
+    statController.restoreLifeAndMana(heroToken, heroTokenId, statController.heroAttributes(heroToken, heroTokenId));
+
+    statController.clearTemporallyAttributes(heroToken, heroTokenId);
+    statController.clearUsedConsumables(heroToken, heroTokenId);
+
+    emit IApplicationEvents.RestInShelter(msgSender, heroToken, heroTokenId);
+  }
+  //endregion ------------------------ Consumable actions
 
   //region ------------------------ Internal logic
   /// @param nextPrng_ CalcLib.nextPrng, param is required by unit tests
@@ -113,54 +201,69 @@ library ItemLib {
     MintItemInfo memory info,
     function (LibPRNG.PRNG memory, uint) internal view returns (uint) nextPrng_
   ) internal returns (address[] memory) {
-    unchecked {
-      uint len = info.mintItems.length;
+
+    // if hero is not in his biome do not mint at all
+    if (info.mintDropChanceDelta != 0) {
+      return new address[](0);
+    }
+
+    uint len = info.mintItems.length;
 
     // Fisher–Yates shuffle
-      LibPRNG.PRNG memory prng = LibPRNG.PRNG(info.oracle.getRandomNumber(CalcLib.MAX_CHANCE, info.seed));
-      uint[] memory indices = new uint[](len);
-      for (uint i = 1; i < len; ++i) {
-        indices[i] = i;
-      }
-      LibPRNG.shuffle(prng, indices);
-
-      address[] memory minted = new address[](len);
-      uint mintedLength;
-      uint delta = StatLib.mintDropChanceDelta(info.heroExp, info.heroCurrentLvl, info.biome);
-      uint di = Math.min(uint(int(info.destroyItems)), 100);
-
-      for (uint i; i < len; ++i) {
-        if (info.mintItemsChances[indices[i]] > CalcLib.MAX_CHANCE) {
-          revert IAppErrors.TooHighChance(info.mintItemsChances[indices[i]]);
-        }
-        uint chance = StatLib.mintDropChance(info.mintItemsChances[indices[i]], info.amplifier, delta);
-        chance += chance * uint(int(info.magicFind)) / 100;
-        chance -= chance * di / 100;
-
-        // need to call random in each loop coz each minted item should have dedicated chance
-        uint rnd = nextPrng_(prng, CalcLib.MAX_CHANCE); // randomWithSeed_(CalcLib.MAX_CHANCE, rndSeed);
-
-        if (chance != 0 && (chance >= CalcLib.MAX_CHANCE || rnd < chance)) {
-          // There is no break here: the cycle is continued even if the number of the minted items reaches the max.
-          // The reason: gas consumption of success operation must be great of equal of the gas consumption of fail op.
-          if (mintedLength < info.maxItems) {
-            minted[i] = info.mintItems[indices[i]];
-            ++mintedLength;
-          }
-        }
-      }
-
-      address[] memory mintedAdjusted = new address[](mintedLength);
-      uint j;
-      for (uint i; i < len; ++i) {
-        if (minted[i] != address(0)) {
-          mintedAdjusted[j] = minted[i];
-          ++j;
-        }
-      }
-
-      return mintedAdjusted;
+    LibPRNG.PRNG memory prng = LibPRNG.PRNG(info.oracle.getRandomNumber(CalcLib.MAX_CHANCE, info.seed));
+    uint[] memory indices = new uint[](len);
+    for (uint i = 1; i < len; ++i) {
+      indices[i] = i;
     }
+    LibPRNG.shuffle(prng, indices);
+
+    address[] memory minted = new address[](len);
+    uint mintedLength;
+    uint di = Math.min(CalcLib.toUint(info.destroyItems), 100);
+
+    for (uint i; i < len; ++i) {
+      if (info.mintItemsChances[indices[i]] > CalcLib.MAX_CHANCE) {
+        revert IAppErrors.TooHighChance(info.mintItemsChances[indices[i]]);
+      }
+
+      uint chance = _adjustChance(info.mintItemsChances[indices[i]], info, di);
+
+      // need to call random in each loop coz each minted item should have dedicated chance
+      uint rnd = nextPrng_(prng, CalcLib.MAX_CHANCE); // randomWithSeed_(CalcLib.MAX_CHANCE, rndSeed);
+
+      if (chance != 0 && (chance >= CalcLib.MAX_CHANCE || rnd < chance)) {
+        // There is no break here: the cycle is continued even if the number of the minted items reaches the max.
+        // The reason: gas consumption of success operation must be great of equal of the gas consumption of fail op.
+        if (mintedLength < info.maxItems) {
+          minted[i] = info.mintItems[indices[i]];
+          ++mintedLength;
+        }
+      }
+    }
+
+    address[] memory mintedAdjusted = new address[](mintedLength);
+    uint j;
+    for (uint i; i < len; ++i) {
+      if (minted[i] != address(0)) {
+        mintedAdjusted[j] = minted[i];
+        ++j;
+      }
+    }
+
+    return mintedAdjusted;
+  }
+
+  /// @notice Apply all corrections to the chance of item drop
+  /// There are two params to increase chances: amplifier and magicFind
+  /// There are two params to decrease chances: destroyItems and mintDropChanceNgLevelMultiplier
+  /// @param info Assume here, that info.mintDropChanceNgLevelMultiplier is in the range [0..1e18]
+  /// @param di Assume that di <= 100
+  function _adjustChance(uint32 itemChance, MintItemInfo memory info, uint di) internal pure returns (uint) {
+    uint chance = uint(itemChance) * Math.min(1e18, info.mintDropChanceNgLevelMultiplier) / 1e18;
+    chance += chance * info.amplifier / StatLib._MAX_AMPLIFIER;
+    chance += chance * CalcLib.toUint(info.magicFind) / 100;
+    chance -= chance * di / 100;
+    return chance;
   }
 
   function _setupNewAttributes(
@@ -337,7 +440,6 @@ library ItemLib {
 
       if (info.chances[i] >= CalcLib.MAX_CHANCE || !ctx.stopGenerateRandom) {
         (int32 attr, uint random) = _generateAttribute(info.mins[i], info.maxs[i], info.chances[i], random_);
-//          console.log("GEN id: %s, value: %s%s", _info.ids[i], attr >= 0 ? '' : '-', attr >= 0 ? uint(int(attr)) : uint(int(- attr)));
 
         // count only random attributes for calc rarity
         if (attr != 0) {

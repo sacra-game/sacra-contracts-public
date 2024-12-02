@@ -38,9 +38,9 @@ contract HeroBase is NftBase, IHero, ERC721Holder {
 
   //region ------------------------ Restrictions
 
-  function _beforeTokenTransfer(uint heroId) internal view override {
+  function _beforeTokenTransfer(uint heroId) internal override {
     if (
-      ! IHeroController(IController(controller()).heroController()).isAllowedToTransfer(address(this), heroId)
+      ! IHeroController(IController(controller()).heroController()).beforeTokenTransfer(address(this), heroId)
     ) revert IAppErrors.TokenTransferNotAllowed();
   }
   //endregion ------------------------ Restrictions

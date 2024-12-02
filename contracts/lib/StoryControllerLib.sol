@@ -324,8 +324,8 @@ library StoryControllerLib {
       // check answer requirements, burn items, transfer tokens and so on
       IStoryController.AnswerResultId answerResult = StoryLib.checkAnswer(context, s);
 
-      // burn randomly selected items
-      StoryLib.burn(context, s);
+      // break randomly selected items
+      StoryLib.breakItem(context, s);
 
       // handle answer - refresh states
       uint16 nextPage;

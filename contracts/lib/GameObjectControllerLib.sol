@@ -12,6 +12,10 @@ import "../lib/StoryLib.sol";
 import "../lib/MonsterLib.sol";
 import "../lib/GOCLib.sol";
 
+interface ArbSys {
+  function arbBlockNumber() external view returns (uint256);
+}
+
 library GameObjectControllerLib {
   using EnumerableSet for EnumerableSet.UintSet;
   using PackingLib for bytes32;
@@ -168,12 +172,19 @@ library GameObjectControllerLib {
     iteration = _increaseIteration(heroToken, heroTokenId, objectId);
 
     (, uint8 objectSubType) = getObjectMeta(objectId);
+    IHeroController.HeroInfo memory heroInfo = IHeroController(c.heroController()).getHeroInfo(heroToken, heroTokenId);
     uint8 t = uint8(GOCLib.getObjectTypeBySubType(IGOC.ObjectSubType(objectSubType)));
 
     if (t == uint8(IGOC.ObjectType.EVENT)) {
       // noop
     } else if (t == uint8(IGOC.ObjectType.MONSTER)) {
-      MonsterLib.initialGeneration(_S().monsterInfos[objectId], heroToken, heroTokenId, iteration, IERC20(c.gameToken()).totalSupply());
+      MonsterLib.initialGeneration(
+        _S().monsterInfos[objectId],
+        heroToken,
+        heroTokenId,
+        iteration,
+        heroInfo.ngLevel
+      );
     } else if (t == uint8(IGOC.ObjectType.STORY)) {
       // noop
     } else {
@@ -207,6 +218,7 @@ library GameObjectControllerLib {
     ctx.stageId = stageId;
     ctx.data = data;
     (ctx.biome, ctx.objectSubType) = getObjectMeta(objectId);
+    ctx.heroNgLevel = IHeroController(c.heroController()).getHeroInfo(heroToken, heroTokenId).ngLevel;
 
     ctx.dungeonId = dungeonId;
     ctx.iteration = _S().iterations[_iterationKey(heroToken, heroTokenId, objectId)];
@@ -215,6 +227,11 @@ library GameObjectControllerLib {
     IGOC.ActionResult memory r;
     uint8 t = uint8(GOCLib.getObjectTypeBySubType(IGOC.ObjectSubType(ctx.objectSubType)));
     ctx.salt = block.number;
+
+    // for L2 chains need to get correct block number from precompiled contracts
+    if(block.chainid == uint(111188)) {
+      ctx.salt = ArbSys(address(100)).arbBlockNumber();
+    }
 
     if (t == uint8(IGOC.ObjectType.EVENT)) {
       r = EventLib.action(ctx, _S().eventInfos[objectId]);

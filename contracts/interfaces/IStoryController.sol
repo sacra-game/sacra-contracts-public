@@ -115,7 +115,9 @@ interface IStoryController {
     ///      4 - global fail
     ///      see COUNT_CUSTOM_DATA_RESULT_IDS
     mapping(bytes32 => bytes32[]) customDataResult;
-    /// @dev answerPackedId => slot+chance+stopIfBurnt
+
+    /// @notice answerPackedId => slot+chance+stopIfBurnt
+    /// @dev Since SIP-003 the items are not burn but broke
     mapping(bytes32 => bytes32[]) burnItem;
 
     // --- GENERAL STORY REQUIREMENTS ---
@@ -134,6 +136,12 @@ interface IStoryController {
 
     /// @dev storyId => build hash for the last update
     mapping(uint16 => uint) storyBuildHash;
+
+    /// @notice Number of already minted items by the user within the given iteration of the story.
+    /// Only minting of the given number of items is allowed per iteration (see MAX_MINTED_ITEMS_PER_ITERATION).
+    /// @dev hero, heroId, story => mintedInIteration
+    /// This map is not cleared: storyId:objectId is 1:1, each object has own sequence of iterations without duplicates
+    mapping(bytes32 => mapping(uint iteration => uint countMintedItems)) mintedInIteration;
   }
 
   /// @dev We need to have flat structure coz Solidity can not handle arrays of structs properly
@@ -280,6 +288,7 @@ interface IStoryController {
     uint8[][] slots;
     /// @notice typical chances are [0..100] (no decimals here)
     uint64[][] chances;
+    /// @notice Since SIP-003 the burning is replaced by breaking bu the name is kept as is
     bool[][] isStopIfBurnt;
   }
 

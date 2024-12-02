@@ -37,7 +37,7 @@ contract StatController is Controllable, IStatController {
 
   /// @notice Version of the contract
   /// @dev Should be incremented when contract changed
-  string public constant override VERSION = "2.1.1";
+  string public constant override VERSION = "2.1.2";
   //endregion ------------------------ CONSTANTS
 
   //region ------------------------ INITIALIZER
@@ -49,7 +49,7 @@ contract StatController is Controllable, IStatController {
 
   //region ------------------------ VIEWS
 
-  function heroInitialAttributes(uint heroClass) external pure returns (StatLib.InitialHero memory) {
+  function heroInitialAttributes(uint heroClass) external view returns (StatLib.InitialHero memory) {
     return StatLib.initialHero(heroClass);
   }
 
@@ -77,8 +77,16 @@ contract StatController is Controllable, IStatController {
     return StatControllerLib.heroBaseAttributes(StatControllerLib._S(), token, tokenId);
   }
 
-  function heroCustomData(address token, uint tokenId, bytes32 index) external view override returns (uint) {
-    return StatControllerLib.heroCustomData(StatControllerLib._S(), token, tokenId, index);
+  function heroCustomData(address hero, uint heroId, bytes32 index) external view override returns (uint) {
+    return StatControllerLib.heroCustomData(IHeroController(IController(controller()).heroController()), hero, heroId, index);
+  }
+
+  function heroCustomDataOnNgLevel(address hero, uint heroId, bytes32 index, uint8 ngLevel) external view returns (uint) {
+    return StatControllerLib.heroCustomDataOnNgLevel(IHeroController(IController(controller()).heroController()), hero, heroId, index, ngLevel);
+  }
+
+  function getAllHeroCustomData(address token, uint tokenId) external view returns (bytes32[] memory keys, uint[] memory values) {
+    return StatControllerLib.getAllHeroCustomData(IHeroController(IController(controller()).heroController()), token, tokenId);
   }
 
   function globalCustomData(bytes32 index) external view override returns (uint) {
@@ -105,7 +113,7 @@ contract StatController is Controllable, IStatController {
     return StatControllerLib.isConsumableUsed(StatControllerLib._S(), heroToken, heroTokenId, item);
   }
 
-  function buffHero(BuffInfo memory info) external view override returns (int32[] memory, int32) {
+  function buffHero(BuffInfo calldata info) external view override returns (int32[] memory, int32) {
     return StatControllerLib.buffHero(StatControllerLib._S(), IController(controller()), info);
   }
   //endregion ------------------------ VIEWS
@@ -125,6 +133,10 @@ contract StatController is Controllable, IStatController {
 
   function initNewHero(address heroToken, uint heroTokenId, uint heroClass) external override {
     return StatControllerLib.initNewHero(StatControllerLib._S(), IController(controller()), heroToken, heroTokenId, heroClass);
+  }
+
+  function resetHeroCustomData(address heroToken, uint heroTokenId) external {
+    return StatControllerLib.resetHeroCustomData(StatControllerLib._S(), IController(controller()), heroToken, heroTokenId);
   }
 
   function changeHeroItemSlot(
@@ -180,6 +192,16 @@ contract StatController is Controllable, IStatController {
 
   function setGlobalCustomData(bytes32 index, uint value) external override {
     return StatControllerLib.setGlobalCustomData(StatControllerLib._S(), IController(controller()), index, value);
+  }
+
+  /// @notice Restore life and mana during reinforcement
+  /// @param prevAttributes Hero attributes before reinforcement
+  function restoreLifeAndMana(address heroToken, uint heroTokenId, int32[] memory prevAttributes) external override {
+    return StatControllerLib.restoreLifeAndMana(StatControllerLib._S(), IController(controller()), heroToken, heroTokenId, prevAttributes);
+  }
+
+  function reborn(address heroToken, uint heroTokenId, uint heroClass) external override {
+    StatControllerLib.reborn(IController(controller()), heroToken, heroTokenId, heroClass);
   }
   //endregion ------------------------ ACTIONS
 

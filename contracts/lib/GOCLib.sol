@@ -91,7 +91,6 @@ library GOCLib {
     uint heroTokenId,
     uint8 cType
   ) internal returns (uint32 objectId) {
-
     // clear played objects if we played them all at the current biome
     if (played.length() >= lenObjects) {
       skipPlayed = true;

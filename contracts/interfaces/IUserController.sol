@@ -2,6 +2,8 @@
 
 pragma solidity 0.8.23;
 
+import "../openzeppelin/EnumerableSet.sol";
+
 interface IUserController {
 
   //region ------------------------ Data types
@@ -52,6 +54,11 @@ interface IUserController {
     uint maxDropItems;
   }
 
+  enum UserControllerParam {
+    /// @notice Price of story skipping in game points
+    PRICE_STORY_SKIPPING_1
+  }
+
   /// @custom:storage-location erc7201:user.controller.main
   struct MainState {
     /// @notice Amount of sacra required to rename user account
@@ -80,6 +87,16 @@ interface IUserController {
 
     // @notice Hall of Fame: ngLevel [1...99] => who opened the NG_LEVEL first
     mapping(uint8 ngLevel => FameHallData) fameHall;
+
+    /// @notice Points earned for passing dungeons
+    mapping(address user => uint gamePoints) gamePoints;
+
+    /// @notice List of objects (currently only stories) passed by the given account
+    /// @dev hashes of the stories are as encodePacked("STORY_{ID}")
+    mapping(address user => EnumerableSet.Bytes32Set hashes) passedObjects;
+
+    /// @notice Values of various params, see {UserControllerParam}
+    mapping(UserControllerParam paramId => uint value) userControllerParams;
   }
 
   struct FameHallData {
@@ -105,4 +122,10 @@ interface IUserController {
   function registerPvP(address user, bool isWinner) external;
 
   function registerFameHallHero(address hero, uint heroId, uint8 openedNgLevel) external;
+
+  function useGamePointsToSkipStore(address user, uint16 storyId) external;
+
+  function setStoryPassed(address user, uint16 storyId) external;
+
+  function isStoryPassed(address user, uint16 storyId) external view returns (bool);
 }

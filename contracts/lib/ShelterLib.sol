@@ -269,7 +269,7 @@ library ShelterLib {
     }
 
     // mint the item
-    IItemController(controller.itemController()).mint(item, msgSender);
+    IItemController(controller.itemController()).mint(item, msgSender, 0);
 
     emit IApplicationEvents.PurchaseShelterItem(msgSender, item, numSoldItems + 1, itemData.priceInPvpPoints, itemData.priceInGameToken);
   }

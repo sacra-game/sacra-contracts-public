@@ -34,14 +34,17 @@ import "../interfaces/IERC20.sol";
 import "../interfaces/IERC721.sol";
 import "../interfaces/IGuildBank.sol";
 import "../interfaces/IGuildController.sol";
-import {IApplicationEvents} from "../interfaces/IApplicationEvents.sol";
+import "../openzeppelin/ERC721Holder.sol";
+import "../interfaces/IApplicationEvents.sol";
 
-contract GuildBank is IGuildBank {
+/// @dev SCR-1253: ERC721Holder was added in 1.0.2.
+/// So, safeTransferFrom won't work with all contract instances with the lower version. They should be upgraded.
+contract GuildBank is IGuildBank, ERC721Holder {
 
   //region ------------------------ CONSTANTS
   /// @notice Version of the contract
   /// @dev Should be incremented when contract changed
-  string public constant VERSION = "1.0.1";
+  string public constant VERSION = "1.0.2";
   //endregion ------------------------ CONSTANTS
 
   //region ------------------------ Members

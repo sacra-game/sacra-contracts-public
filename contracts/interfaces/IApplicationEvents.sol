@@ -6,9 +6,16 @@ import "./IStatController.sol";
 import "./IDungeonFactory.sol";
 import "./IStoryController.sol";
 import "./IFightCalculator.sol";
+import "./IPvpController.sol";
 
 /// @notice All events of the app
 interface IApplicationEvents {
+
+  //region ------------------------ Common
+  event SetOperator(address operator, bool remove);
+  event Salvage(address receiver, address token, uint amount);
+  //endregion ------------------------ Common
+
 
   //region ------------------ StatController
   event HeroItemSlotChanged(
@@ -77,7 +84,7 @@ interface IApplicationEvents {
 
   event ObjectAction(
     uint64 dungId,
-    IGOC.ActionResult result,
+    IGOC.ActionResultEvent result,
     uint currentStage,
     address heroToken,
     uint heroTokenId,
@@ -111,7 +118,7 @@ interface IApplicationEvents {
     uint8 stageId,
     uint iteration,
     bytes data,
-    IGOC.ActionResult result,
+    IGOC.ActionResultEvent result,
     uint salt
   );
   //endregion ------------------ GameObjectController
@@ -184,7 +191,11 @@ interface IApplicationEvents {
 
   //region ------------------------ HeroController
   event HeroRegistered(address hero, uint8 heroClass, address payToken, uint payAmount);
+  /// @notice Deprecated, replaced by {HeroCreatedNgpSandbox}. Don't remove - it's required by subgraph
   event HeroCreatedNgp(address hero, uint heroId, string name, address owner, string refCode, uint8 tier, uint8 ngLevel);
+  event HeroCreatedNgpSandbox(address hero, uint heroId, string name, address owner, string refCode, uint8 tier, uint8 ngLevel, bool sandbox);
+  event FreeHeroCreated(address hero, uint heroId);
+
   event BiomeChanged(address hero, uint heroId, uint8 biome);
   event LevelUp(address hero, uint heroId, address owner, IStatController.CoreAttributes change);
   event ReinforcementAsked(address hero, uint heroId, address helpHeroToken, uint helpHeroId);
@@ -196,6 +207,8 @@ interface IApplicationEvents {
   event Reborn(address hero, uint heroId, uint8 newNgLevel);
   event BossKilled(address account, address hero, uint heroId, uint8 biome, uint8 newNgLevel, bool reborn, uint rewardAmount);
   event TierSetup(uint8 tier, address hero, uint72 payAmount, uint8[] slots, address[][] items);
+  event SandboxUpgraded(address hero, uint heroId);
+  event SandboxReturnAmountToTreasury(uint64 dungId, address token, uint amount);
   //endregion ------------------------ HeroController
 
   //region ------------------------ FightLib
@@ -204,6 +217,16 @@ interface IApplicationEvents {
     IFightCalculator.FightInfoInternal result,
     IFightCalculator.FightCall callData,
     uint iteration
+  );
+  /// @param heroA Address of the fighter A.  Address of the fighter B can be detected by fightId
+  /// @param heroIdA ID of the figher A. ID of the fighter B can be detected by fightId
+  event PvpFightResultProcessed(
+    uint48 fightId,
+    address sender,
+    IFightCalculator.FightInfoInternal result,
+    uint turn,
+    address heroA,
+    uint heroIdA
   );
   //endregion ------------------------ FightLib
 
@@ -229,9 +252,16 @@ interface IApplicationEvents {
   event TokenStatusChanged(address token, bool status);
   event UserControllerChanged(address value);
   event GuildControllerChanged(address value);
+
+  event PvpControllerChanged(address value);
+
   event GameTokenPriceChanged(uint value);
   event RewardsPoolChanged(address value);
+  event ItemBoxControllerChanged(address value);
   event Process(address token, uint amount, address from, uint toBurn, uint toTreasury, uint toGov);
+  event GaugeChanged(address gauge);
+  event NotifyRewardAmount(address token, uint amount);
+  event UpdatePeriod(uint myrdAmount);
   //endregion ------------------------ Controller
 
 
@@ -242,9 +272,9 @@ interface IApplicationEvents {
   event HeroAsk(address heroToken, uint heroId);
   event HeroAskV2(address heroToken, uint heroId, uint hitsLast24h, uint fixedFee, uint helperRewardAmount);
   event TokenRewardRegistered(address heroToken, uint heroId, address token, uint amountAdded, uint totalAmount);
-  event GuildTokenRewardRegistered(address heroToken, uint heroId, address token, uint amountAdded, uint guildId);
+  event GuildTokenRewardRegistered(address heroToken, uint heroId, address token, uint amountAdded, uint guildId, uint64 dungeonId);
   event NftRewardRegistered(address heroToken, uint heroId, address token, uint id);
-  event GuildNftRewardRegistered(address heroToken, uint heroId, address token, uint id, uint guildId);
+  event GuildNftRewardRegistered(address heroToken, uint heroId, address token, uint id, uint guildId, uint64 dungeonId);
   event ToHelperRatioChanged(uint value);
   event ClaimedToken(address heroToken, uint heroId, address token, uint amount, address recipient);
   event ClaimedItem(address heroToken, uint heroId, address item, uint itemId, address recipient);
@@ -260,7 +290,7 @@ interface IApplicationEvents {
   //endregion ------------------------ Treasury, reward pool
 
   //region ------------------------ EventLib
-  event EventResult(uint64 dungeonId, address heroToken, uint heroTokenId, uint8 stageId, IStatController.ActionInternalInfo gen, uint iteration);
+  event EventResult(uint64 dungeonId, address heroToken, uint heroTokenId, uint8 stageId, IStatController.EventActionInfo gen, uint iteration);
   //endregion ------------------------ EventLib
 
   //region ------------------------ Item controller and helper contracts
@@ -274,6 +304,7 @@ interface IApplicationEvents {
   event ItemRepaired(address item, uint itemId, uint consumedItemId, uint16 baseDurability);
   event FailedToRepairItem(address item, uint itemId, uint consumedItemId, uint16 itemDurability);
   event Augmented(address item, uint itemId, uint consumedItemId, uint8 augLevel, IItemController.AugmentInfo info);
+  event ResetAugmentation(address item, uint itemId, uint consumedItemId, IItemController.AugmentInfo info);
   event NotAugmented(address item, uint itemId, uint consumedItemId, uint8 augLevel);
   event ReduceDurability(address item, uint itemId, uint newDurability);
   event Used(address item, uint tokenId, address heroToken, uint heroTokenId);
@@ -283,7 +314,16 @@ interface IApplicationEvents {
   event SetUnionConfig(uint configId, address[] items, uint[] count, address itemToMint);
   event RemoveUnionConfig(uint configId);
   event SetUnionKeyPass(address keyPassItem);
+  event SetAugmentationProtectiveItem(address keyPassItem);
   event CombineItems(address msgSender, uint configId, address[] items, uint[][] itemIds, address mintedItem, uint mintedItemId);
+  event RegisterSandboxItem(address hero, uint heroId, address item, uint itemId, uint tsMinting);
+  event WithdrawItemsFromSandbox(address hero, uint heroId, address[] items, uint[] itemIds);
+  event ItemReturnedToSandbox(address hero, uint heroId, address item, uint itemId);
+  event RegisterSandboxUpgrade(address hero, uint heroId, uint tsUpgradng);
+  event TransferItemToHeroFromSandbox(address hero, uint heroId, address item, uint itemId);
+  event DestroyItemInSandbox(address item, uint itemId);
+  event NewItemSentToSandbox(address item, uint itemId);
+  event ExitFromDungeon(address hero, uint heroId);
   //endregion ------------------------ Item controller and helper contracts
 
   //region ------------------------ NFT and GameToken (only custom events, not ERC20/721 standards)
@@ -309,8 +349,19 @@ interface IApplicationEvents {
   event LootBoxOpened(address user, uint lootBoxKind, address[] itemTokens, uint[] itemTokenIds);
   event LootBoxConfigChanged(uint lootBoxKind, address[] mintItems, uint32[] mintItemsChances, uint maxDropItems);
   event SetFeeRenaming(uint feeRenaming);
+
   event ActivityCompleted(address user, bool daily, bool weekly);
+  event RegisterPassedDungeon(address user, uint32 epochWeek, uint counterPassedDungeons);
+  event RegisterPvp(address user, uint32 epochWeek, uint counterPvp);
   event FameHallHeroRegistered(address hero, uint heroId, address heroOwner, uint8 openedNgLevel);
+  event SetMinHeroLevel(uint level);
+  event SetGuildStakingAdapter(address adapter);
+
+  event AddGamePoints(address user, uint finalBalanceGamePoints);
+  /// @param paramId See IUserController.UserControllerParam
+  event SetUserControllerParam(uint8 paramId, uint paramValue);
+  event UseGamePointsToSkipStory(address user, uint16 storyId, uint priceInGamePoints, uint finalBalanceGamePoints);
+  event SetStoryPassed(address user, uint16 storyId);
   //endregion ------------------------ User controller
 
   //region ------------------------ Guild
@@ -324,10 +375,12 @@ interface IApplicationEvents {
   event GuildRename(uint guildId, string newName);
   event GuildLogoChanged(uint guildId, string newLogoUrl);
   event GuildDescriptionChanged(uint guildId, string newDescription);
+  event GuildBannerChanged(uint guildId, string newBanner);
   event SetGuildRelation(uint guildId1, uint guildId2, bool peace);
   event TransferFromGuildBank(address user, address token, uint amount, address recipient);
   event TransferNftFromGuildBank(address user, address[] nfts, uint[] tokenIds, address recipient);
   event GuildBankDeployed(uint guildId, address guildBank);
+  event TransferOwnership(address prevOwner, address newOwner);
 
   event SetToHelperRatio(uint guildId, uint8 value, address user);
   event TopUpGuildBank(address msgSender, uint guildId, address guildBank, uint amount);
@@ -372,10 +425,37 @@ interface IApplicationEvents {
   event GuildHeroReleased(address heroToken, uint heroId, uint guildId, address user);
   //endregion ------------------------ Guild reinforcement
 
+  //region ------------------------ Pvp
+  event AddBiomeRequest(address user, uint8 biome, uint guildId, uint32 week);
+  event PvpHeroAdded(address user, uint guildId, address hero, uint heroId, uint week, uint8 biome);
+  /// @param manuallyRemoved True - removed manually by the user, false - removed automatically after the fight
+  event PvpHeroRemoved(address user, uint guildId, uint week, uint8 biome, address hero, uint heroId, bool manuallyRemoved);
+  event PreparePvpFight(uint48 fightId, uint32 week, address hero, uint heroId, uint heroGuildId, address opponentHero, uint opponentHeroId, uint opponentGuildId);
+
+  /// @notice heroId can be detected by {fightId} and {heroes}
+  event PvpFightCompleted(
+    IPvpController.PvpFightResults fightResult,
+    uint48 fightId,
+    address[2] heroes,
+    uint64[2] guilds,
+    bool[2] winners,
+    uint[2] prizes,
+    bool technicalDefeat
+  );
+  event UpdatePvpEpoch(uint8 biome, uint32 week, uint guildBiomeOwnerId);
+  event FirstPvpEpoch(uint8 biome, uint32 week);
+  event BiomeTaxPaid(address msgSender, uint8 biome, uint guildId, uint amount, uint taxPercent, uint taxAmount, uint64 dungeonId);
+  event BiomeTaxPaidNft(address msgSender, uint8 biome, uint guildId, address item, uint itemId, uint taxPercent, uint64 dungeonId);
+  event AddPvpFightItems(uint48 fightId, address[] items, uint[] itemIds);
+
+  //endregion ------------------------ Pvp
+
   //region ------------------------ Guild auction
   event AuctionPositionOpened(uint positionId, uint shelterId, uint sellerGuildId, address msgSender, uint minAuctionPrice);
   event AuctionPositionClosed(uint positionId, address msgSender);
   event AuctionBidOpened(uint bidId, uint positionId, uint amount, address msgSender);
+  event ApplyAuctionBid(uint bidId, address msgSender);
+  event AuctionSetFee(uint fee);
   //endregion ------------------------ Guild auction
 
   //region ------------------------ Guild bank
@@ -392,4 +472,18 @@ interface IApplicationEvents {
   event PawnShopRouterBulkBuy(uint[] positionIds, address receiver);
 
   //endregion ------------------------ Pawnshop
+
+  //region ------------------------ Airdrop Distributor
+  event AirdropDistributorSetToken(address token);
+  event AirdropDistributorAddTree(uint week, bytes32 merkleRoot_);
+  event AirdropDistributorRemoveTree(uint week);
+  event AirdropDistributorClaim(uint[] _weeks, uint[] amounts, address receiver);
+
+  //endregion ------------------------ Airdrop Distributor
+
+  //region ------------------------ GuildStakingManager
+  event SetStakingToken(address token);
+  event StakeTokens(address token, uint amount, uint guildId, uint total);
+  //endregion ------------------------ GuildStakingManager
+
 }

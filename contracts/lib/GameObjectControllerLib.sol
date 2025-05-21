@@ -5,6 +5,8 @@ import "../openzeppelin/EnumerableSet.sol";
 import "../interfaces/IGOC.sol";
 import "../interfaces/IAppErrors.sol";
 import "../interfaces/IApplicationEvents.sol";
+import "../interfaces/IUserController.sol";
+import "../interfaces/IHeroController.sol";
 import "../proxy/Controllable.sol";
 import "../lib/PackingLib.sol";
 import "../lib/EventLib.sol";
@@ -39,8 +41,8 @@ library GameObjectControllerLib {
     if (!controller.isDeployer(msg.sender)) revert IAppErrors.ErrorNotDeployer(msg.sender);
   }
 
-  function onlyDungeonFactory(IController c) internal view {
-    if (c.dungeonFactory() != msg.sender) revert IAppErrors.ErrorNotDungeonFactory(msg.sender);
+  function onlyDungeonFactory(address dungeonFactory) internal view {
+    if (dungeonFactory != msg.sender) revert IAppErrors.ErrorNotDungeonFactory(msg.sender);
   }
   //endregion ------------------------ RESTRICTIONS
 
@@ -150,41 +152,35 @@ library GameObjectControllerLib {
     uint8[] memory cTypes,
     uint32[] memory chances,
     uint8 biome,
-    address heroToken,
-    uint heroTokenId
+    address hero,
+    uint heroId
   ) internal returns (uint32 objectId) {
-    onlyDungeonFactory(c);
+    onlyDungeonFactory(c.dungeonFactory());
     return GOCLib.getRandomObject(
       _S(),
       IStoryController(c.storyController()),
       cTypes,
       chances,
       biome,
-      heroToken,
-      heroTokenId
+      hero,
+      heroId
     );
   }
 
   /// @notice Open {object}: increase iteration, [generate monsters]
-  function open(IController c, address heroToken, uint heroTokenId, uint32 objectId) internal returns (uint iteration) {
-    onlyDungeonFactory(c);
+  function open(IController controller, address hero, uint heroId, uint32 objectId) internal returns (uint iteration) {
+    onlyDungeonFactory(controller.dungeonFactory());
 
-    iteration = _increaseIteration(heroToken, heroTokenId, objectId);
+    iteration = _increaseIteration(hero, heroId, objectId);
 
     (, uint8 objectSubType) = getObjectMeta(objectId);
-    IHeroController.HeroInfo memory heroInfo = IHeroController(c.heroController()).getHeroInfo(heroToken, heroTokenId);
     uint8 t = uint8(GOCLib.getObjectTypeBySubType(IGOC.ObjectSubType(objectSubType)));
 
     if (t == uint8(IGOC.ObjectType.EVENT)) {
       // noop
     } else if (t == uint8(IGOC.ObjectType.MONSTER)) {
-      MonsterLib.initialGeneration(
-        _S().monsterInfos[objectId],
-        heroToken,
-        heroTokenId,
-        iteration,
-        heroInfo.ngLevel
-      );
+      IHeroController.HeroInfo memory heroInfo = IHeroController(controller.heroController()).getHeroInfo(hero, heroId);
+      MonsterLib.initialGeneration(_S().monsterInfos[objectId], hero, heroId, iteration, heroInfo.ngLevel);
     } else if (t == uint8(IGOC.ObjectType.STORY)) {
       // noop
     } else {
@@ -196,33 +192,34 @@ library GameObjectControllerLib {
   /// @param data Object type-specified data packed using abi.encode.
   /// For events: bool (accept / not accept results)
   /// For monsters: AttackInfo
-  /// For story: bytes32 (answer id)
+  /// For story: bytes32 (answer id) OR command "SKIP" (4 bytes)
   function action(
-    IController c,
+    IController controller,
     address sender,
     uint64 dungeonId,
     uint32 objectId,
-    address heroToken,
-    uint heroTokenId,
+    address hero,
+    uint heroId,
     uint8 stageId,
     bytes memory data
   ) internal returns (IGOC.ActionResult memory) {
-    onlyDungeonFactory(c);
+    ControllerContextLib.ControllerContext memory cc = ControllerContextLib.init(controller);
+    onlyDungeonFactory(address(ControllerContextLib.dungeonFactory(cc)));
 
     IGOC.ActionContext memory ctx;
 
     ctx.objectId = objectId;
     ctx.sender = sender;
-    ctx.heroToken = heroToken;
-    ctx.heroTokenId = heroTokenId;
+    ctx.heroToken = hero;
+    ctx.heroTokenId = heroId;
     ctx.stageId = stageId;
     ctx.data = data;
     (ctx.biome, ctx.objectSubType) = getObjectMeta(objectId);
-    ctx.heroNgLevel = IHeroController(c.heroController()).getHeroInfo(heroToken, heroTokenId).ngLevel;
+    ctx.heroNgLevel = ControllerContextLib.heroController(cc).getHeroInfo(hero, heroId).ngLevel;
 
     ctx.dungeonId = dungeonId;
-    ctx.iteration = _S().iterations[_iterationKey(heroToken, heroTokenId, objectId)];
-    ctx.controller = c;
+    ctx.iteration = _S().iterations[_iterationKey(hero, heroId, objectId)];
+    ctx.controller = controller;
 
     IGOC.ActionResult memory r;
     uint8 t = uint8(GOCLib.getObjectTypeBySubType(IGOC.ObjectSubType(ctx.objectSubType)));
@@ -236,32 +233,39 @@ library GameObjectControllerLib {
     if (t == uint8(IGOC.ObjectType.EVENT)) {
       r = EventLib.action(ctx, _S().eventInfos[objectId]);
     } else if (t == uint8(IGOC.ObjectType.MONSTER)) {
-      _checkAndRefreshFightTs(heroToken, heroTokenId);
+      _checkAndRefreshFightTs(hero, heroId);
       (r, ctx.salt) = MonsterLib.action(ctx, _S().monsterInfos[objectId]);
     } else if (t == uint8(IGOC.ObjectType.STORY)) {
-      r = StoryLib.action(ctx, _S().storyIds[objectId]);
+      r = StoryLib.action(cc, ctx, _S().storyIds[ctx.objectId]);
     } else {
       revert IAppErrors.UnknownObjectTypeGocLib2(t);
     }
 
     r.objectId = ctx.objectId;
-    r.heroToken = heroToken;
-    r.heroTokenId = heroTokenId;
+    r.heroToken = hero;
+    r.heroTokenId = heroId;
     r.iteration = ctx.iteration;
 
-
-    emit IApplicationEvents.ObjectResultEvent(
-      dungeonId,
-      objectId,
-      IGOC.ObjectType(t),
-      heroToken,
-      heroTokenId,
-      stageId,
-      ctx.iteration,
-      data,
-      r,
-      ctx.salt
-    );
+    emit IApplicationEvents.ObjectResultEvent(dungeonId, objectId, IGOC.ObjectType(t), hero, heroId, stageId, ctx.iteration, data,
+      IGOC.ActionResultEvent(
+        {
+          kill: r.kill,
+          completed: r.completed,
+          heroToken: r.heroToken,
+          mintItems: r.mintItems,
+          heal: r.heal,
+          manaRegen: r.manaRegen,
+          lifeChancesRecovered: r.lifeChancesRecovered,
+          damage: r.damage,
+          manaConsumed: r.manaConsumed,
+          objectId: r.objectId,
+          experience: r.experience,
+          heroTokenId: r.heroTokenId,
+          iteration: r.iteration,
+          rewriteNextObject: r.rewriteNextObject
+        }
+      )
+      , ctx.salt);
     return r;
   }
 //endregion ------------------------ OBJECT ACTIONS
@@ -323,5 +327,6 @@ library GameObjectControllerLib {
       if (mintItemsChances_[i] > CalcLib.MAX_CHANCE) revert IAppErrors.TooHighChance(mintItemsChances_[i]);
     }
   }
+
   //endregion ------------------------ Utils
 }

@@ -43,6 +43,7 @@ contract RewardsPool is Initializable, Controllable, IRewardsPool {
     __Controllable_init(controller_);
   }
 
+  //region ------------------------ View
   function balanceOfToken(address token) external view override returns (uint) {
     return RewardsPoolLib.balanceOfToken(token);
   }
@@ -67,7 +68,9 @@ contract RewardsPool is Initializable, Controllable, IRewardsPool {
   function rewardAmount(address token, uint maxBiome, uint maxNgLevel, uint biome, uint heroNgLevel) external view returns (uint) {
     return RewardsPoolLib.rewardAmount(token, maxBiome, maxNgLevel, biome, heroNgLevel);
   }
+  //endregion ------------------------ View
 
+  //region ------------------------ Actions
   function setBaseAmount(address token, uint baseAmount_) external {
     RewardsPoolLib.setBaseAmount(IController(controller()), token, baseAmount_);
   }
@@ -80,4 +83,5 @@ contract RewardsPool is Initializable, Controllable, IRewardsPool {
   function sendReward(address token, uint rewardAmount_, address receiver) external {
     RewardsPoolLib.sendReward(IController(controller()), token, rewardAmount_, receiver);
   }
+  //endregion ------------------------ Actions
 }

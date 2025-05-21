@@ -407,6 +407,16 @@ library PackingLib {
     augmentationLevel = uint8(uint(data) >> 8);
     durability = uint16(uint(data) >> (8 + 8));
   }
+
+  function packItemBoxItemInfo(bool withdrawn, uint64 timestamp) internal pure returns (bytes32 data) {
+    data = bytes32(uint(uint8(withdrawn ? 1 : 0)));
+    data |= bytes32(uint(timestamp)) << 8;
+  }
+
+  function unpackItemBoxItemInfo(bytes32 data) internal pure returns (bool withdrawn, uint64 timestamp) {
+    withdrawn = uint8(uint(data)) != 0;
+    timestamp = uint64(uint(data) >> 8);
+  }
   //endregion ------------------------------------ ITEMS
 
   //region ------------------------------------ STORIES
@@ -833,4 +843,16 @@ library PackingLib {
     return value;
   }
   //endregion ------------------------------------ Metadata of IItemController.OtherSubtypeKind
+
+  //region ------------------------------------ Metadata of IPvpController.PvpAttackInfoDefaultStrategy
+  function getPvpBehaviourStrategyKind(bytes memory encodedData) internal pure returns (uint) {
+    bytes32 serialized;
+    assembly {
+      serialized := mload(add(encodedData, 64)) // first 32 bytes contain 0x20 and indicate array, we need to read second 32 bytes to get first uint in the struct
+    }
+
+    return uint(serialized);
+  }
+  //endregion ------------------------------------ Metadata of IPvpController.PvpAttackInfoDefaultStrategy
+
 }

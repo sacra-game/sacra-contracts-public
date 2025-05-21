@@ -114,26 +114,27 @@ contract GameObjectController is Controllable, IGOC {
     uint8[] memory cTypes,
     uint32[] memory chances,
     uint8 biome,
-    address heroToken,
-    uint heroTokenId
+    address hero,
+    uint heroId
   ) external override returns (uint32 objectId) {
-    return GameObjectControllerLib.getRandomObject(IController(controller()), cTypes, chances, biome, heroToken, heroTokenId);
+    return GameObjectControllerLib.getRandomObject(IController(controller()), cTypes, chances, biome, hero, heroId);
   }
 
-  function open(address heroToken, uint heroTokenId, uint32 objectId) external override returns (uint iteration) {
-    return GameObjectControllerLib.open(IController(controller()), heroToken, heroTokenId, objectId);
+  function open(address hero, uint heroId, uint32 objectId) external override returns (uint iteration) {
+    return GameObjectControllerLib.open(IController(controller()), hero, heroId, objectId);
   }
 
+  /// @param data Answer (1 byte) or string command (3 bytes, i.e. "SKIP")
   function action(
     address sender,
     uint64 dungeonId,
     uint32 objectId,
-    address heroToken,
-    uint heroTokenId,
+    address hero,
+    uint heroId,
     uint8 stageId,
     bytes memory data
   ) external override returns (ActionResult memory) {
-    return GameObjectControllerLib.action(IController(controller()), sender, dungeonId, objectId, heroToken, heroTokenId, stageId, data);
+    return GameObjectControllerLib.action(IController(controller()), sender, dungeonId, objectId, hero, heroId, stageId, data);
   }
 
   //endregion ------------------------ OBJECT

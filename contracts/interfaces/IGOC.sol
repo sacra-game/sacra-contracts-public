@@ -92,6 +92,24 @@ interface IGOC {
     bool completed;
     address heroToken;
     address[] mintItems;
+    uint32[] mintItemsMF;
+    int32 heal;
+    int32 manaRegen;
+    int32 lifeChancesRecovered;
+    int32 damage;
+    int32 manaConsumed;
+    uint32 objectId;
+    uint32 experience;
+    uint heroTokenId;
+    uint iteration;
+    uint32[] rewriteNextObject;
+  }
+
+  struct ActionResultEvent {
+    bool kill;
+    bool completed;
+    address heroToken;
+    address[] mintItems;
     int32 heal;
     int32 manaRegen;
     int32 lifeChancesRecovered;

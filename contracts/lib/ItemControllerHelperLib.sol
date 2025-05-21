@@ -44,11 +44,38 @@ library ItemControllerHelperLib {
     return _S().globalParam[IItemControllerHelper.GlobalParam(globalParam)];
   }
 
+  /// @return True if the given skills are equipped on the hero
+  /// or if they were equipped on the helper at the moment of asking help by the hero
+  function areSkillsAvailableForHero(
+    IController controller,
+    address[] memory skillTokens,
+    uint[] memory skillTokenIds,
+    address hero,
+    uint heroId
+  ) internal view returns (bool) {
+    IHeroController heroController = IHeroController(controller.heroController());
+    IItemController itemController = IItemController(controller.itemController());
+
+    // assume here that if the hero has no reinforcement at this moment than helperSkills is empty
+    (address[] memory items, uint[] memory itemIds,) = heroController.helperSkills(hero, heroId);
+
+    for (uint i; i < skillTokens.length; ++i) {
+      (address h, uint hId) = itemController.equippedOn(skillTokens[i], skillTokenIds[i]);
+      if (hero != h || hId != heroId) {
+        if (items.length == 0 || !_isHelperItem(skillTokens[i], skillTokenIds[i], items, itemIds)) {
+          return false;
+        }
+      }
+    }
+
+    return true;
+  }
+
   //endregion ------------------------ Views
 
   //region ------------------------ Deployer actions
   function addUnionConfig(IController controller, address[] memory items, uint[] memory count, address itemToMint) internal returns (uint) {
-    ItemStatsLib.onlyDeployer(controller, msg.sender);
+    ItemLib.onlyDeployer(controller, msg.sender);
 
     _checkConfigItems(items, count);
 
@@ -69,7 +96,7 @@ library ItemControllerHelperLib {
   }
 
   function updateUnionConfig(IController controller, uint configId, address[] memory items, uint[] memory count, address itemToMint) internal {
-    ItemStatsLib.onlyDeployer(controller, msg.sender);
+    ItemLib.onlyDeployer(controller, msg.sender);
 
     _checkConfigItems(items, count);
 
@@ -85,7 +112,7 @@ library ItemControllerHelperLib {
   }
 
   function removeUnionConfig(IController controller, uint configId) internal {
-    ItemStatsLib.onlyDeployer(controller, msg.sender);
+    ItemLib.onlyDeployer(controller, msg.sender);
 
     if (configId == 0 || _S().unionConfig[configId].configId != configId) revert IAppErrors.UnknownUnionConfig(configId);
     delete _S().unionConfig[configId];
@@ -97,11 +124,21 @@ library ItemControllerHelperLib {
   /// @notice Set key pass item. User should own this item to be able to combine items.
   /// @param item 0 is allowed, it means there is no keyPass item
   function setUnionKeyPassItem(IController controller, address item) internal {
-    ItemStatsLib.onlyDeployer(controller, msg.sender);
+    ItemLib.onlyDeployer(controller, msg.sender);
 
     _S().globalParam[IItemControllerHelper.GlobalParam.UNION_KEY_PASS_ITEM_1] = uint(uint160(item));
     emit IApplicationEvents.SetUnionKeyPass(item);
   }
+
+  /// @notice SCR-1263: set augmentation protective item
+  /// @param item 0 is allowed, it means there is no protective item
+  function setAugmentationProtectiveItem(IController controller, address item) internal {
+    ItemLib.onlyDeployer(controller, msg.sender);
+
+    _S().globalParam[IItemControllerHelper.GlobalParam.AUGMENTATION_PROTECTIVE_ITEM_3] = uint(uint160(item));
+    emit IApplicationEvents.SetAugmentationProtectiveItem(item);
+  }
+
   //endregion ------------------------ Deployer actions
 
   //region ------------------------ Item controller actions
@@ -111,7 +148,8 @@ library ItemControllerHelperLib {
   /// @dev itemTokenIds[count tokens of i-th item][countItems]
   /// @return Item to mint in exchange of {items}
   function prepareToCombine(address user, uint configId, address[] memory items, uint[][] memory tokens) internal view returns (address) {
-    // user must own keyPass item
+    // User must own keyPass item on his balance, sandbox items of upgraded heroes are not supported.
+    // Transmutation in sandbox mode is not supported at all.
     address _keyPassItem = keyPassItem();
     if (_keyPassItem != address(0)) {
       if (0 == IERC721(_keyPassItem).balanceOf(user)) revert IAppErrors.UserHasNoKeyPass(user, _keyPassItem);
@@ -158,13 +196,15 @@ library ItemControllerHelperLib {
       if (index == type(uint).max) revert IAppErrors.UnionItemNotFound(configItems[i]);
 
       // check ownership of {count} tokens of the given item
-      uint[] memory tokens = itemTokenIds[index];
-      uint lenTokens = tokens.length;
+      uint[] memory ids = itemTokenIds[index];
+      uint lenTokens = ids.length;
 
       if (configCount[i] != lenTokens) revert IAppErrors.WrongListUnionItemTokens(configItems[i], lenTokens, configCount[i]);
 
       for (uint k; k < lenTokens; ++k) {
-        if (IERC721(configItems[i]).ownerOf(tokens[k]) != user) revert IAppErrors.ErrorNotOwner(configItems[i], tokens[k]);
+        // User must have all items on his balance, sandbox items of upgraded heroes are not supported.
+        // Transmutation in sandbox mode is not supported at all.
+        if (IERC721(configItems[i]).ownerOf(ids[k]) != user) revert IAppErrors.ErrorNotOwner(configItems[i], ids[k]);
       }
 
       // we don't check uniqueness of the tokens in {itemTokenIds}
@@ -177,6 +217,17 @@ library ItemControllerHelperLib {
     uint len = items.length;
     if (len == 0) revert IAppErrors.ZeroValueNotAllowed();
     if (len != count.length) revert IAppErrors.LengthsMismatch();
+  }
+
+  /// @notice Check if the item was equipped on the helper at the moment of asking help by the hero
+  function _isHelperItem(address item, uint itemId, address[] memory items, uint[] memory itemIds) internal pure returns (bool) {
+    for (uint j; j < items.length; ++j) {
+      if (items[j] == item && itemIds[j] == itemId) {
+        return true;
+      }
+    }
+
+    return false;
   }
   //endregion ------------------------ Internal logic
 

@@ -71,17 +71,43 @@ library DungeonLib {
   /// @notice Lazy initialization data for _claimAll
   struct ClaimContext {
     address helpHeroToken;
-    address heroPayToken;
     address msgSender;
+    address guildBank;
     address[] tokens;
+    /// @notice list of items sent to ItemBox
+    address[] items;
+
+    uint8 biome;
+    uint8 sandboxMode;
     uint64 dungId;
-    uint helpHeroId;
 
     /// @dev Limited by ReinforcementController._TO_HELPER_RATIO_MAX
     uint toHelperRatio;
     uint itemLength;
     uint tokenLength;
+    uint helpHeroId;
+
+    /// @notice Percent of tax that is taken if favor of biome owner, decimals 3
+    uint taxPercent;
+    uint guildId;
+
     uint[] amounts;
+
+    /// @notice list of items sent to ItemBox
+    uint[] itemIds;
+    /// @notice Actual count of items sent to the ItemBox
+    uint countItems;
+  }
+
+  /// @notice Various cases of using _onHeroKilled
+  enum DungeonExitMode {
+    ACTION_ENDED_0,
+
+    /// @notice Exit using special item. Life => 1, mana => 0, keep items
+    FORCED_EXIT_1,
+
+    /// @notice SCR-1446: Exit with suicide. Loose life chance, restore life and mana, keep items
+    HERO_SUICIDE_2
   }
   //endregion ------------------------ Data types
 
@@ -139,6 +165,13 @@ library DungeonLib {
   }
   //endregion ------------------------ Common
 
+  //region ------------------------ Restrictions
+  function onlyOwner(address hero, uint heroId, address msgSender) internal view {
+    if (IERC721(hero).ownerOf(heroId) != msgSender) revert IAppErrors.ErrorNotOwner(hero, heroId);
+  }
+  //region ------------------------ Restrictions
+
+
   //region ------------------------ Main logic
 
   /// @notice Make an action with object, update hero params according results
@@ -168,7 +201,7 @@ library DungeonLib {
         objectId: currentObject_,
         currentStage: dungStatus.currentStage,
         biome: uint(dungAttributes.biome),
-        statController: ControllerContextLib.getStatController(cc),
+        statController: ControllerContextLib.statController(cc),
         result: a,
         stats: IStatController.ChangeableStats(0, 0, 0, 0, 0),
         stages: uint(dungStatus.stages),
@@ -204,8 +237,8 @@ library DungeonLib {
     // check restrictions, most of them are checked by the caller
     if (c.objectId == 0) revert IAppErrors.ErrorNotObject2();
 
-    c.isBattleObj = ControllerContextLib.getGameObjectController(cc).isBattleObject(c.objectId);
-    c.result = ControllerContextLib.getGameObjectController(cc).action(
+    c.isBattleObj = ControllerContextLib.gameObjectController(cc).isBattleObject(c.objectId);
+    c.result = ControllerContextLib.gameObjectController(cc).action(
       c.msgSender, c.dungId, c.objectId, c.heroToken, c.heroTokenId, c.currentStage, c.data
     );
 
@@ -213,7 +246,7 @@ library DungeonLib {
       _markSkillSlotsForDurabilityReduction(
         _S(),
         c.statController,
-        ControllerContextLib.getItemController(cc),
+        ControllerContextLib.itemController(cc),
         c.data,
         c.heroToken,
         c.heroTokenId
@@ -227,28 +260,8 @@ library DungeonLib {
 
     if (c.result.kill || c.stats.life <= c.result.damage.toUint()) {
       c.result.kill = true;
-      _changeCurrentDungeon(_S(), c.heroToken, c.heroTokenId, 0);
-      IHeroController hc = ControllerContextLib.getHeroController(cc);
-      hc.releaseReinforcement(c.heroToken, c.heroTokenId);
 
-      // in case of death we need to remove rewrote objects and reset initial stages
-      _resetUniqueObjects(dungStatus, dungAttributes);
-
-      // no need to release if we completed the dungeon - we will never back on the same
-      _releaseSkillSlotsForDurabilityReduction(_S(), c.heroToken, c.heroTokenId);
-
-      // if it was the last life chance - kill the hero
-      if (c.stats.lifeChances <= 1) {
-        _killHero(hc, c.dungId, c.heroToken, c.heroTokenId, dungStatus.treasuryItems);
-      } else {
-        _afterObjCompleteForSurvivedHero(c, cc);
-        _reduceLifeChances(c.statController, c.heroToken, c.heroTokenId, c.stats.life, c.stats.mana);
-
-        // scb-1000: soft death resets used consumables
-        c.statController.clearUsedConsumables(c.heroToken, c.heroTokenId);
-        // also soft death reset all buffs
-        c.statController.clearTemporallyAttributes(c.heroToken, c.heroTokenId);
-      }
+      _exitActionEnd(c, dungStatus, dungAttributes, cc);
 
       // scb-994: increment death count counter
       uint deathCounter = c.statController.heroCustomData(c.heroToken, c.heroTokenId, StatControllerLib.DEATH_COUNT_HASH);
@@ -260,43 +273,137 @@ library DungeonLib {
       _decreaseChangeableStats(c.statController, c.heroToken, c.heroTokenId, c.result);
       _mintItems(c, cc, dungStatus.treasuryItems);
       if (c.result.completed) {
-        _afterObjCompleteForSurvivedHero(c, cc);
+        _afterObjCompleteForSurvivedHero(c.heroToken, c.heroTokenId, c.biome, c.isBattleObj, cc, address(c.statController));
         (isCompleted, newStage, currentObject) = _nextRoomOrComplete(c, cc, dungStatus, c.stages, dungStatus.treasuryTokens);
       }
       // clear = false;
     }
 
-    emit IApplicationEvents.ObjectAction(c.dungId, c.result, c.currentStage, c.heroToken, c.heroTokenId, newStage);
+    emit IApplicationEvents.ObjectAction(c.dungId,
+      IGOC.ActionResultEvent(
+        {
+          kill: c.result.kill,
+          completed: c.result.completed,
+          heroToken: c.result.heroToken,
+          mintItems: c.result.mintItems,
+          heal: c.result.heal,
+          manaRegen: c.result.manaRegen,
+          lifeChancesRecovered: c.result.lifeChancesRecovered,
+          damage: c.result.damage,
+          manaConsumed: c.result.manaConsumed,
+          objectId: c.result.objectId,
+          experience: c.result.experience,
+          heroTokenId: c.result.heroTokenId,
+          iteration: c.result.iteration,
+          rewriteNextObject: c.result.rewriteNextObject
+        }
+      )
+    , c.currentStage, c.heroToken, c.heroTokenId, newStage);
     return (isCompleted, newStage, currentObject, clear);
   }
 
-  /// @notice Hero exists current dungeon forcibly same as when dying but without loosing life chance and keeping all items equipped
+  /// @notice Hero exists current dungeon forcibly
   /// @dev Dungeon state is cleared outside
-  function exitForcibly(
-    address heroToken,
-    uint heroTokenId,
+  function exitSpecial(
+    address hero,
+    uint heroId,
+    IDungeonFactory.DungeonStatus storage dungStatus,
+    IDungeonFactory.DungeonAttributes storage dungAttributes,
+    ControllerContextLib.ControllerContext memory cc,
+    DungeonLib.DungeonExitMode exitMode
+  ) internal {
+    IStatController statController = ControllerContextLib.statController(cc);
+    _onExitDungeon(
+      hero,
+      heroId,
+      statController,
+      statController.heroStats(hero, heroId),
+      dungStatus,
+      dungAttributes,
+      cc,
+      exitMode,
+      0, // not used
+      0, // not used
+      false // not used
+    );
+  }
+  //endregion ------------------------ Main logic
+
+  //region ------------------------ Main logic - auxiliary functions
+  function _exitActionEnd(
+    ObjectActionInternalData memory c,
     IDungeonFactory.DungeonStatus storage dungStatus,
     IDungeonFactory.DungeonAttributes storage dungAttributes,
     ControllerContextLib.ControllerContext memory cc
   ) internal {
-    _changeCurrentDungeon(_S(), heroToken, heroTokenId, 0);
-    IHeroController hc = ControllerContextLib.getHeroController(cc);
-    IStatController sc = ControllerContextLib.getStatController(cc);
-
-    hc.releaseReinforcement(heroToken, heroTokenId);
-    _resetUniqueObjects(dungStatus, dungAttributes);
-
-    // equipped items are NOT taken off
-    // life => 1, mana => 0
-    hc.resetLifeAndMana(heroToken, heroTokenId);
-
-    sc.clearUsedConsumables(heroToken, heroTokenId);
-    sc.clearTemporallyAttributes(heroToken, heroTokenId);
+    _onExitDungeon(
+      c.heroToken,
+      c.heroTokenId,
+      c.statController,
+      c.stats,
+      dungStatus,
+      dungAttributes,
+      cc,
+      DungeonExitMode.ACTION_ENDED_0,
+      c.dungId,
+      c.biome,
+      c.isBattleObj
+    );
   }
 
-  //endregion ------------------------ Main logic
+  function _onExitDungeon(
+    address hero,
+    uint heroId,
+    IStatController statController,
+    IStatController.ChangeableStats memory stats,
+    IDungeonFactory.DungeonStatus storage dungStatus,
+    IDungeonFactory.DungeonAttributes storage dungAttributes,
+    ControllerContextLib.ControllerContext memory cc,
+    DungeonExitMode mode,
+    uint64 dungId,
+    uint biome,
+    bool isBattleObj
+  ) internal {
+    _changeCurrentDungeon(_S(), hero, heroId, 0);
 
-  //region ------------------------ Main logic - auxiliary functions
+    IHeroController hc = ControllerContextLib.heroController(cc);
+    hc.releaseReinforcement(hero, heroId);
+
+    // in case of death we need to remove rewrote objects and reset initial stages
+    _resetUniqueObjects(dungStatus, dungAttributes);
+
+    bool heroDied;
+
+    if (mode == DungeonExitMode.ACTION_ENDED_0) {
+      // no need to release if we completed the dungeon - we will never back on the same
+      _releaseSkillSlotsForDurabilityReduction(_S(), hero, heroId);
+      heroDied = stats.lifeChances <= 1;
+      if (heroDied) {
+        // it was the last life chance - kill the hero
+        _killHero(hc, dungId, hero, heroId, dungStatus.treasuryItems);
+      } else {
+        _afterObjCompleteForSurvivedHero(hero, heroId, biome, isBattleObj, cc,
+          address(0) // don't call clearTemporallyAttributes, it will be called below anyway
+        );
+        _reduceLifeChances(statController, hero, heroId, stats.life, stats.mana);
+      }
+    } else if (mode == DungeonExitMode.FORCED_EXIT_1) {
+      // life => 1, mana => 0, lifeChance is NOT changed, hero is NOT burnt, items are kept equipped.
+      hc.resetLifeAndMana(hero, heroId);
+    } else if (mode == DungeonExitMode.HERO_SUICIDE_2) {
+      if (stats.lifeChances <= 1) revert IAppErrors.LastLifeChance();
+      // equipped items are NOT taken off, life chance reduced, life and mana are restored to default values
+      // death count counter is not incremented in this case
+      _reduceLifeChances(statController, hero, heroId, stats.life, stats.mana);
+    }
+
+    if (!heroDied) {
+      // scb-1000: soft death resets used consumables
+      statController.clearUsedConsumables(hero, heroId);
+      // also soft death reset all buffs
+      statController.clearTemporallyAttributes(hero, heroId);
+    }
+  }
 
   /// @notice If hero has dead in the dungeon, it's necessary to restore initial set of unique objects,
   ///         in other words, all changes introduces by {_nextRoomOrComplete} should be thrown away.
@@ -337,15 +444,22 @@ library DungeonLib {
 
   /// @notice If battle object: reduce equipped items durability and clear temporally attributes
   /// @dev Not necessary to call if a hero is dead
+  /// @param statController Pass 0 to avoid calling of clearTemporallyAttributes
   function _afterObjCompleteForSurvivedHero(
-    ObjectActionInternalData memory context,
-    ControllerContextLib.ControllerContext memory cc
+    address hero,
+    uint heroId,
+    uint biome,
+    bool isBattleObj,
+    ControllerContextLib.ControllerContext memory cc,
+    address statController
   ) internal {
-    if (context.isBattleObj) {
+    if (isBattleObj) {
       // reduce equipped items durability
-      ControllerContextLib.getItemController(cc).reduceDurability(context.heroToken, context.heroTokenId, uint8(context.biome), false);
-      // clear temporally attributes
-      context.statController.clearTemporallyAttributes(context.heroToken, context.heroTokenId);
+      ControllerContextLib.itemController(cc).reduceDurability(hero, heroId, uint8(biome), false);
+      if (statController != address(0)) {
+        // clear temporally attributes
+        IStatController(statController).clearTemporallyAttributes(hero, heroId);
+      }
     }
   }
 
@@ -489,13 +603,13 @@ library DungeonLib {
     uint64 dungId = context.dungId;
     IGOC.ActionResult memory result = context.result;
 
-    IItemController ic = ControllerContextLib.getItemController(cc);
+    IItemController ic = ControllerContextLib.itemController(cc);
 
     for (uint i; i < result.mintItems.length; i++) {
       if (result.mintItems[i] == address(0)) {
         continue;
       }
-      uint itemId = ic.mint(result.mintItems[i], address(this));
+      uint itemId = ic.mint(result.mintItems[i], address(this), result.mintItemsMF.length > i ? result.mintItemsMF[i] : 0);
       treasuryItems.push(result.mintItems[i].packNftId(itemId));
       emit IApplicationEvents.AddTreasuryItem(dungId, result.mintItems[i], itemId);
     }
@@ -511,21 +625,19 @@ library DungeonLib {
     address hero,
     uint heroId
   ) private {
-    IHeroController heroController = ControllerContextLib.getHeroController(cc);
-    uint maxOpenedNgLevel = heroController.maxOpenedNgLevel();
+    IHeroController heroController = ControllerContextLib.heroController(cc);
     uint heroNgLevel = heroController.getHeroInfo(hero, heroId).ngLevel;
 
-    IGameToken gameToken = ControllerContextLib.getGameToken(cc);
+    IGameToken gameToken = ControllerContextLib.gameToken(cc);
     uint amount = IMinter(gameToken.minter()).mintDungeonReward(dungId, biome, lvlForMint);
-    // Total amount of rewards should be equal to: reward = normal_reward * (1 + NG_LVL) / ng_sum
-    // We have minted {amount}, so we should burn off {amount - reward}.
-    // {amount} is exactly equal to {reward} only if NG_LVL is 0
-    uint reward = amount * (1 + heroNgLevel) / RewardsPoolLib.getNgSum(maxOpenedNgLevel);
+    uint reward = AppLib._getAdjustedReward(amount, heroNgLevel);
     if (amount > reward) {
       gameToken.burn(amount - reward);
       amount = reward;
     }
-    
+
+    // SCR-1602: we should not combine rewards with treasury tokens ideally
+    // but historically they are combined, so not rewards but whole combined amount is divided between tax/reinf/hero
     _registerTreasuryToken(address(gameToken), treasuryTokens, amount);
     emit IApplicationEvents.AddTreasuryToken(dungId, address(gameToken), amount);
   }
@@ -559,17 +671,22 @@ library DungeonLib {
   ) internal {
     IDungeonFactory.MainState storage s = _S();
 
-    IStatController.ChangeableStats memory stats = ControllerContextLib.getStatController(cc).heroStats(heroToken, heroTokenId);
+    IStatController.ChangeableStats memory stats = ControllerContextLib.statController(cc).heroStats(heroToken, heroTokenId);
     uint8 dungBiome = dungAttrs.biome;
 
-    if (ControllerContextLib.getReinforcementController(cc).isStaked(heroToken, heroTokenId)) revert IAppErrors.Staked(heroToken, heroTokenId);
+    if (ControllerContextLib.reinforcementController(cc).isStaked(heroToken, heroTokenId)) revert IAppErrors.Staked(heroToken, heroTokenId);
+    {
+      IPvpController pc = ControllerContextLib.pvpController(cc);
+      if (address(pc) != address(0) && pc.isHeroStakedCurrently(heroToken, heroTokenId)) revert IAppErrors.PvpStaked();
+    }
+
     if (stats.lifeChances == 0) revert IAppErrors.ErrorHeroIsDead(heroToken, heroTokenId);
     if (s.heroCurrentDungeon[heroToken.packNftId(heroTokenId)] != 0) revert IAppErrors.ErrorAlreadyInDungeon();
     // assume here that onlyEnteredHeroOwner is already checked by the caller
 
-    if (ControllerContextLib.getHeroController(cc).heroBiome(heroToken, heroTokenId) != dungBiome) revert IAppErrors.ErrorNotBiome();
+    if (ControllerContextLib.heroController(cc).heroBiome(heroToken, heroTokenId) != dungBiome) revert IAppErrors.ErrorNotBiome();
     if (dungStatus.heroToken != address(0)) revert IAppErrors.ErrorDungeonBusy();
-    if (!isDungeonEligibleForHero(s, ControllerContextLib.getStatController(cc), dungNum, uint8(stats.level), heroToken, heroTokenId)) {
+    if (!isDungeonEligibleForHero(s, ControllerContextLib.statController(cc), dungNum, uint8(stats.level), heroToken, heroTokenId)) {
       revert IAppErrors.ErrorNotEligible(heroToken, dungNum);
     }
 
@@ -644,7 +761,7 @@ library DungeonLib {
 
     uint8 heroBiome;
     {
-      IHeroController hc = ControllerContextLib.getHeroController(cc);
+      IHeroController hc = ControllerContextLib.heroController(cc);
       heroBiome = hc.heroBiome(heroToken, heroTokenId);
 
       // try to get specific dungeon
@@ -672,7 +789,7 @@ library DungeonLib {
     uint size = dungs.length();
     if (size == 0) revert IAppErrors.ErrorNoDungeonsForBiome(heroBiome);
 
-    IStatController statController = ControllerContextLib.getStatController(cc);
+    IStatController statController = ControllerContextLib.statController(cc);
     uint16 dungeonLogic;
     uint dungeonIndex = random % size;
     for (uint i; i < size; ++i) {
@@ -700,28 +817,27 @@ library DungeonLib {
 
     if (!dungStatus.isCompleted) revert IAppErrors.ErrorNotCompleted();
     if (controller.onPause()) revert IAppErrors.ErrorPaused();
-    if (IERC721(heroToken).ownerOf(heroTokenId) != msgSender) revert IAppErrors.ErrorNotOwner(heroToken, heroTokenId);
+    onlyOwner(heroToken, heroTokenId, msgSender);
     if (_S().heroCurrentDungeon[heroToken.packNftId(heroTokenId)] != dungId) revert IAppErrors.ErrorHeroNotInDungeon();
 
-    IHeroController heroController = ControllerContextLib.getHeroController(cc);
+    IHeroController heroController = ControllerContextLib.heroController(cc);
     (address payToken,) = heroController.payTokenInfo(heroToken);
+    if (payToken == address(0)) revert IAppErrors.ZeroToken(); // old free hero is not supported anymore (i.e. hero 5, F2P)
 
-    _setDungeonCompleted(_S(), dungStatus.dungNum, dungId, heroToken, heroTokenId);
+    uint16 dungNum = dungStatus.dungNum;
+    _setDungeonCompleted(_S(), dungNum, dungId, heroToken, heroTokenId);
 
     if (claim) {
-      _claimAll(cc, msgSender, dungId, dungStatus, heroToken, heroTokenId, payToken);
+      _claimAll(cc, msgSender, dungId, dungNum, dungStatus, heroToken, heroTokenId);
     }
     _heroExit(_S(), heroController, heroToken, heroTokenId);
-
-    if (payToken == address(0)) {
-      // F2P hero doesn't have pay token, he is destroyed after exit of the dungeon
-      _killHero(heroController, dungId, heroToken, heroTokenId, dungStatus.treasuryItems);
-    }
 
     // register daily activity
     address userController = controller.userController();
     if (userController != address(0)) {
-      IUserController(userController).registerPassedDungeon(msgSender);
+      if (heroController.sandboxMode(heroToken, heroTokenId) != uint8(IHeroController.SandboxMode.SANDBOX_MODE_1)) {
+        IUserController(userController).registerPassedDungeon(msgSender);
+      }
     }
 
     emit IApplicationEvents.Exit(dungId, claim);
@@ -852,34 +968,66 @@ library DungeonLib {
 
   //region ------------------------ CLAIM
 
+  /// @notice Calculate amount of biome owner tax
+  /// @return taxPercent Percent of tax that is taken if favor of biome owner, decimals 3
+  /// @return guildBank Address of guild bank of the biome owner
+  /// @return guildId The owner of the biome
+  function _getBiomeTax(
+    uint8 biome,
+    ControllerContextLib.ControllerContext memory cc
+  ) internal returns (
+    uint taxPercent,
+    address guildBank,
+    uint guildId
+  ) {
+    IPvpController pvpController = ControllerContextLib.pvpController(cc);
+    if (address(pvpController) != address(0)) {
+      (uint _guildId, uint _taxPercent) = pvpController.refreshBiomeTax(biome);
+      if (_guildId != 0) {
+        // assume that guildController cannot be 0 if pvp controller is set
+        guildBank = ControllerContextLib.guildController(cc).getGuildBank(_guildId);
+        if (guildBank != address(0)) {
+          guildId = _guildId;
+          taxPercent = _taxPercent;
+        }
+      }
+    }
+
+    return (taxPercent, guildBank, guildId);
+  }
+
   /// @notice Claim all treasure tokens and items registered for the given hero.
-  ///         The tokens are send to msgSender and/or helper, or they can be send to controller or burned.
+  ///         At first the tax is taken in favor of biome owner if any.
+  ///         Remain tokens are send to msgSender and/or helper, or they can be send to controller or burned.
   ///         The items are transferred to msgSender or helper (random choice) or destroyed (F2P hero).
   /// @dev ClaimContext is used both for lazy initialization and to extend limits of allowed local vars.
-  /// @param heroPayToken Hero pay token. It's zero for hero 5.
   function _claimAll(
     ControllerContextLib.ControllerContext memory cc,
     address msgSender,
     uint64 dungId,
+    uint16 dungNum,
     IDungeonFactory.DungeonStatus storage dungStatus,
-    address heroToken,
-    uint heroTokenId,
-    address heroPayToken
+    address hero,
+    uint heroId
   ) internal {
     ClaimContext memory context;
 
     context.msgSender = msgSender;
     context.dungId = dungId;
 
-    (context.helpHeroToken, context.helpHeroId) = ControllerContextLib.getHeroController(cc).heroReinforcementHelp(heroToken, heroTokenId);
-    context.toHelperRatio = ControllerContextLib.getReinforcementController(cc).toHelperRatio(context.helpHeroToken, context.helpHeroId);
+    (context.helpHeroToken, context.helpHeroId) = ControllerContextLib.heroController(cc).heroReinforcementHelp(hero, heroId);
+    context.toHelperRatio = ControllerContextLib.reinforcementController(cc).toHelperRatio(context.helpHeroToken, context.helpHeroId);
 
     context.itemLength = dungStatus.treasuryItems.length;
     context.tokenLength = dungStatus.treasuryTokens.length();
     context.tokens = new address[](context.tokenLength);
     context.amounts = new uint[](context.tokenLength);
 
-    context.heroPayToken = heroPayToken;
+    IDungeonFactory.DungeonAttributes storage dungAttrs = _S().dungeonAttributes[dungNum];
+    context.biome = dungAttrs.biome;
+    (context.taxPercent, context.guildBank, context.guildId) = _getBiomeTax(context.biome, cc);
+
+    context.sandboxMode = ControllerContextLib.heroController(cc).sandboxMode(hero, heroId);
 
     // need to write tokens separately coz we need to delete them from map
     for (uint i; i < context.tokenLength; i++) {
@@ -890,9 +1038,26 @@ library DungeonLib {
       _claimToken(dungStatus.treasuryTokens, context, cc, context.tokens[i], context.amounts[i]);
     }
 
+    if (context.sandboxMode == uint8(IHeroController.SandboxMode.SANDBOX_MODE_1) && context.itemLength != 0) {
+      context.items = new address[](context.itemLength);
+      context.itemIds = new uint[](context.itemLength);
+      context.countItems = 0;
+    }
+
     for (uint i; i < context.itemLength; i++) {
       (address itemAdr, uint itemId) = dungStatus.treasuryItems[i].unpackNftId();
-      _claimItem(context, cc, itemAdr, itemId);
+      if (_claimItem(context, cc, itemAdr, itemId)) {
+        // the item was already sent to itemBoxController, we need to call registerItems() for it below
+        context.items[context.countItems] = itemAdr;
+        context.itemIds[context.countItems] = itemId;
+        context.countItems += 1;
+      }
+    }
+
+    if (context.sandboxMode == uint8(IHeroController.SandboxMode.SANDBOX_MODE_1) && context.countItems != 0) {
+      // Too much code is required to cut two arrays to required length here.
+      // It's easier to ignore unnecessary items on ItemBox side.
+      ControllerContextLib.itemBoxController(cc).registerItems(hero, heroId, context.items, context.itemIds, context.countItems);
     }
 
     delete dungStatus.treasuryItems;
@@ -906,30 +1071,40 @@ library DungeonLib {
     address token,
     uint amount
   ) internal {
+    address gameToken = address(ControllerContextLib.gameToken(cc));
+
     treasuryTokens.remove(token);
     if (amount != 0) {
+      if (context.sandboxMode == uint8(IHeroController.SandboxMode.SANDBOX_MODE_1)) {
+        // send treasury back to the Treasury in sandbox mode, assume that amount != 0 here
+        IERC20(token).transfer(address(ControllerContextLib.treasury(cc)), amount);
+        emit IApplicationEvents.SandboxReturnAmountToTreasury(context.dungId, token, amount);
+      } else {
+        // SCR-1602: we should split only minted rewards between tax/reinf/hero
+        // but historically treasury tokens are combined with minted rewards
+        // so, the whole combined amount (of the game tokens) is divided between tax/reinf/hero here
 
-      if (context.heroPayToken == address(0)) {
-        if (token == address(ControllerContextLib.getGameToken(cc))) {
-          IGameToken(token).burn(amount);
-        } else {
-          IERC20(token).transfer(address(cc.controller), amount);
+        uint amountMinusTax = amount;
+        if (context.taxPercent != 0 && context.guildBank != address(0) && gameToken == token) {
+          uint taxAmount = amount * context.taxPercent / 100_000;
+          IERC20(token).transfer(context.guildBank, taxAmount); // assume that taxAmount is not 0 here
+          amountMinusTax -= taxAmount;
+          emit IApplicationEvents.BiomeTaxPaid(context.msgSender, context.biome, context.guildId, amount, context.taxPercent, taxAmount, context.dungId);
         }
 
-      } else {
-        uint toHelper = context.helpHeroToken == address(0)
+        uint toHelper = context.helpHeroToken == address(0) || gameToken != token
           ? 0
-          : amount * context.toHelperRatio / 100;
+          : amountMinusTax * context.toHelperRatio / 100;
 
-        uint toHeroOwner = amount - toHelper;
+        uint toHeroOwner = amountMinusTax - toHelper;
         if (toHeroOwner != 0) {
           IERC20(token).transfer(context.msgSender, toHeroOwner);
         }
 
         if (toHelper != 0) {
-          IReinforcementController reinforcementController = ControllerContextLib.getReinforcementController(cc);
+          IReinforcementController reinforcementController = ControllerContextLib.reinforcementController(cc);
           IERC20(token).transfer(address(reinforcementController), toHelper);
-          reinforcementController.registerTokenReward(context.helpHeroToken, context.helpHeroId, token, toHelper);
+          reinforcementController.registerTokenReward(context.helpHeroToken, context.helpHeroId, token, toHelper, context.dungId);
         }
 
         emit IApplicationEvents.ClaimToken(context.dungId, token, amount);
@@ -938,35 +1113,49 @@ library DungeonLib {
   }
 
   /// @notice Destroy item (for F2P) or transfer the item to helper/sender (random choice)
+  /// @return itemWasSentToItemBoxController True if ItemBoxController.registerItems() must be called after the call
   function _claimItem(
     ClaimContext memory context,
     ControllerContextLib.ControllerContext memory cc,
     address token,
     uint tokenId
-  ) internal {
+  ) internal returns (bool itemWasSentToItemBoxController) {
     if (IERC721(token).ownerOf(tokenId) == address(this)) {
 
-      if (context.heroPayToken == address(0)) {
-        // if it is F2P hero destroy all drop
-        ControllerContextLib.getItemController(cc).destroy(token, tokenId);
+      // get tax in favor of biome owner if any
+      bool toBiomeOwner = false;
+      if (context.taxPercent != 0 && context.guildBank != address(0)) {
+        toBiomeOwner = ControllerContextLib.oracle(cc).getRandomNumber(100_000, 0) < context.taxPercent;
+      }
+
+      bool toHelper = false;
+      if (!toBiomeOwner && context.helpHeroToken != address(0)) {
+        toHelper = ControllerContextLib.oracle(cc).getRandomNumber(100, 0) < context.toHelperRatio;
+      }
+
+      if (toBiomeOwner) {
+        // SCR-1253: Attention: GuildBank with version below 1.0.2 was not inherited from ERC721Holder (mistake).
+        // As result, safeTransferFrom doesn't work with such banks, they must be updated. So, use transferFrom here.
+        IERC721(token).transferFrom(address(this), context.guildBank, tokenId);
+        emit IApplicationEvents.BiomeTaxPaidNft(context.msgSender, context.biome, context.guildId, token, tokenId, context.taxPercent, context.dungId);
+      } else if (toHelper) {
+        IReinforcementController reinforcementController = ControllerContextLib.reinforcementController(cc);
+        IERC721(token).safeTransferFrom(address(this), address(reinforcementController), tokenId);
+        reinforcementController.registerNftReward(context.helpHeroToken, context.helpHeroId, token, tokenId, context.dungId);
       } else {
-
-        bool toHelper = false;
-        if (context.helpHeroToken != address(0)) {
-          toHelper = ControllerContextLib.getOracle(cc).getRandomNumber(100, 0) < context.toHelperRatio;
-        }
-
-        if (toHelper) {
-          IReinforcementController reinforcementController = ControllerContextLib.getReinforcementController(cc);
-          IERC721(token).safeTransferFrom(address(this), address(reinforcementController), tokenId);
-          reinforcementController.registerNftReward(context.helpHeroToken, context.helpHeroId, token, tokenId);
+        if (context.sandboxMode == uint8(IHeroController.SandboxMode.SANDBOX_MODE_1)) {
+          IItemBoxController itemBoxController = ControllerContextLib.itemBoxController(cc);
+          IERC721(token).safeTransferFrom(address(this), address(itemBoxController), tokenId);
+          itemWasSentToItemBoxController = true; // notify caller that registerItems() should be called
         } else {
           IERC721(token).safeTransferFrom(address(this), context.msgSender, tokenId);
         }
-
-        emit IApplicationEvents.ClaimItem(context.dungId, token, tokenId);
       }
+
+      emit IApplicationEvents.ClaimItem(context.dungId, token, tokenId);
     }
+
+    return itemWasSentToItemBoxController;
   }
   //endregion ------------------------ CLAIM
 

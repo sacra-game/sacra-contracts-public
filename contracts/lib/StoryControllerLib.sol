@@ -11,7 +11,6 @@ import "../lib/StoryLib.sol";
 import "../lib/PackingLib.sol";
 import "../lib/StorySetupLib.sol";
 
-
 library StoryControllerLib {
   using EnumerableSet for EnumerableSet.UintSet;
   using EnumerableSet for EnumerableSet.Bytes32Set;
@@ -87,13 +86,11 @@ library StoryControllerLib {
 
   /// @notice Get list of answers for the current page stored in the hero state
   /// @return List of answers for the (page, heroClass). If the list is empty return default answers for (page, 0)
-  function currentHeroAnswers(IController controller, uint16 storyId, address hero, uint80 heroId) internal view returns (
+  function currentHeroAnswers(ControllerContextLib.ControllerContext memory cc, uint16 storyId, address hero, uint80 heroId) internal view returns (
     bytes32[] memory
   ) {
-    IHeroController hc = IHeroController(controller.heroController());
-
     (uint16 pageId,) = _S().heroState[hero.packStoryHeroStateId(heroId, storyId)].unpackStoryHeroState();
-    bytes32[] memory heroAnswers = _S().answers[storyId.packStoryPageId(pageId, hc.heroClass(hero))];
+    bytes32[] memory heroAnswers = _S().answers[storyId.packStoryPageId(pageId, ControllerContextLib.heroController(cc).heroClass(hero))];
 
     if (heroAnswers.length == 0) {
       heroAnswers = _S().answers[storyId.packStoryPageId(pageId, 0)];
@@ -111,9 +108,16 @@ library StoryControllerLib {
   }
 
   function isStoryAvailableForHero(IController controller, uint32 objectId, address heroToken, uint heroTokenId) internal view returns (bool) {
-    return StoryLib.isStoryAvailableForHero(_S(), _S().storyIds[objectId], heroToken, heroTokenId, controller.statController());
+    return StoryLib.isStoryAvailableForHero(_S(), _S().storyIds[objectId], heroToken, heroTokenId, IStatController(controller.statController()));
   }
 
+  function skippableStory(uint16 storyId) internal view returns (bool) {
+    return _S().skippableStory.contains(storyId);
+  }
+
+  function allSkippableStories() internal view returns (uint[] memory skippableStoryIds) {
+    return _S().skippableStory.values();
+  }
   //endregion ------------------------ VIEWS
 
   //region ------------------------ SETTERS
@@ -221,6 +225,18 @@ library StoryControllerLib {
     onlyDeployer(controller);
     StorySetupLib.finalizeStoryRegistration(_S(), storyId, objectId, buildHash);
   }
+
+  function setSkippableStories(IController controller, uint16[] memory storyIds_, bool skippable) internal {
+    onlyDeployer(controller);
+    uint len = storyIds_.length;
+    for (uint i; i < len; ++i) {
+      if (skippable) {
+        _S().skippableStory.add(storyIds_[i]);
+      } else {
+        _S().skippableStory.remove(storyIds_[i]);
+      }
+    }
+  }
   //endregion ------------------------ SETTERS
 
   //region ------------------------ CHANGE META
@@ -249,26 +265,25 @@ library StoryControllerLib {
     uint64 dungeonId,
     uint32 objectId,
     uint stageId,
-    address heroToken,
-    uint heroTokenId,
+    address hero,
+    uint heroId,
     uint8 biome,
     uint iteration,
     bytes memory data
   ) internal returns (IGOC.ActionResult memory result) {
-    if (controller.gameObjectController() != msg.sender) revert IAppErrors.ErrorNotObjectController(msg.sender);
+    ControllerContextLib.ControllerContext memory cc = ControllerContextLib.init(controller);
+    if (address(ControllerContextLib.gameObjectController(cc)) != msg.sender) revert IAppErrors.ErrorNotObjectController(msg.sender);
 
-    IStatController statController = IStatController(controller.statController());
     IStoryController.StoryActionContext memory context = IStoryController.StoryActionContext({
       sender: sender,
       dungeonId: dungeonId,
       objectId: objectId,
       storyId: _S().storyIds[objectId],
       stageId: stageId,
+      heroToken: hero,
       controller: controller,
-      statController: statController,
-      heroToken: heroToken,
-      heroTokenId: uint80(heroTokenId),
-      heroClass: 0,
+      oracle: ControllerContextLib.oracle(cc),
+      heroTokenId: uint80(heroId),
       storyIdFromAnswerHash: 0,
       pageIdFromAnswerHash: 0,
       heroClassFromAnswerHash: 0,
@@ -277,20 +292,16 @@ library StoryControllerLib {
       pageId: 0,
       heroLastActionTS: 0,
       answerAttributes: bytes32(0),
-      heroStats: statController.heroStats(heroToken, heroTokenId),
+      heroStats: ControllerContextLib.statController(cc).heroStats(hero, heroId),
       biome: biome,
-      oracle: IOracle(controller.oracle()),
-      iteration: iteration,
-      heroController: IHeroController(controller.heroController()),
-      itemController: IItemController(controller.itemController())
+      iteration: iteration
     });
 
     if (context.storyId == 0) revert IAppErrors.ZeroStoryIdStoryAction();
 
-    context.heroClass = context.heroController.heroClass(heroToken);
     context.answerAttributes = _S().answerAttributes[context.answerIdHash];
 
-    (context.pageId, context.heroLastActionTS) = _S().heroState[heroToken.packStoryHeroStateId(uint80(heroTokenId), context.storyId)].unpackStoryHeroState();
+    (context.pageId, context.heroLastActionTS) = _S().heroState[hero.packStoryHeroStateId(uint80(heroId), context.storyId)].unpackStoryHeroState();
 
     (context.storyIdFromAnswerHash,
       context.pageIdFromAnswerHash,
@@ -298,11 +309,11 @@ library StoryControllerLib {
       context.answerNumber
     ) = context.answerIdHash.unpackStoryAnswerId();
 
-    result = _handleAnswer(context, currentHeroAnswers(controller, context.storyId, heroToken, uint80(heroTokenId)));
+    result = _handleAnswer(cc, context, currentHeroAnswers(cc, context.storyId, hero, uint80(heroId)));
   }
 
   /// @param heroAnswers Full list of possible answers (to be able to check that the answer belongs to the list)
-  function _handleAnswer(IStoryController.StoryActionContext memory context, bytes32[] memory heroAnswers) internal returns (
+  function _handleAnswer(ControllerContextLib.ControllerContext memory cc, IStoryController.StoryActionContext memory context, bytes32[] memory heroAnswers) internal returns (
     IGOC.ActionResult memory results
   ) {
     IStoryController.MainState storage s = _S();
@@ -325,7 +336,7 @@ library StoryControllerLib {
       IStoryController.AnswerResultId answerResult = StoryLib.checkAnswer(context, s);
 
       // break randomly selected items
-      StoryLib.breakItem(context, s);
+      StoryLib.breakItem(cc, context, s);
 
       // handle answer - refresh states
       uint16 nextPage;

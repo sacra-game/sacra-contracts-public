@@ -27,18 +27,15 @@ library ItemControllerLib {
   /// It calls two external functions - ItemStatsLib.use and ItemLib.applyActionMasks
   /// As result, ItemController depends on two libraries, but both libraries don't depend on each other.
   function use(
-    bool isEoa,
-    IController controller,
-    address msgSender,
-    address item,
-    uint itemId,
+    ItemLib.SenderInfo memory senderInfo,
+    ControllerContextLib.ControllerContext memory cc,
+    ItemLib.ItemWithId memory itemData,
     address heroToken,
     uint heroTokenId
   ) internal {
-    IStatController statController = IStatController(controller.statController());
-    uint actionMask = ItemStatsLib.use(isEoa, controller, statController, msgSender, item, itemId, heroToken, heroTokenId);
+    uint actionMask = ItemStatsLib.use(senderInfo, cc, itemData, heroToken, heroTokenId);
     if (actionMask != 0) {
-      ItemLib.applyActionMasks(actionMask, statController, controller, msgSender, heroToken, heroTokenId);
+      ItemLib.applyActionMasks(actionMask, ControllerContextLib.statController(cc), heroToken, heroTokenId);
     }
   }
 
@@ -47,15 +44,14 @@ library ItemControllerLib {
   /// New fragility = initial fragility - value from metadata.
   /// @param consumedItem Item of type "Other" subtype "REDUCE_FRAGILITY_1"
   function repairFragility(
-    bool isEoa,
-    IController controller,
-    address msgSender,
+    ItemLib.SenderInfo memory senderInfo,
+    ControllerContextLib.ControllerContext memory cc,
     address item,
     uint itemId,
     address consumedItem,
     uint consumedItemId
   ) internal {
-    useOtherItem(isEoa, controller, msgSender, consumedItem, consumedItemId, abi.encode(item, itemId), IItemController.OtherSubtypeKind.REDUCE_FRAGILITY_1);
+    useOtherItem(senderInfo, cc, consumedItem, consumedItemId, abi.encode(item, itemId), IItemController.OtherSubtypeKind.REDUCE_FRAGILITY_1);
   }
 
   /// @notice Apply given other item
@@ -63,17 +59,16 @@ library ItemControllerLib {
   /// Format of the data depends on the other-item-subkind
   /// @param expectedKind Not 0 means that we expects that the {otherItem} should have such subtype kind. Can be 0.
   function useOtherItem(
-    bool isEoa,
-    IController controller,
-    address msgSender,
+    ItemLib.SenderInfo memory senderInfo,
+    ControllerContextLib.ControllerContext memory cc,
     address item,
     uint itemId,
     bytes memory data,
     IItemController.OtherSubtypeKind expectedKind
   ) internal {
-    ItemStatsLib._checkPauseEoaOwner(isEoa, controller, msgSender, item, itemId);
-    OtherItemLib.useOtherItem(ItemStatsLib._S(), controller, msgSender, item, itemId, data, expectedKind);
-    ItemStatsLib._destroy(item, itemId);
+    ItemLib.checkPauseEoa(senderInfo, cc.controller);
+    bool inSandbox = OtherItemLib.useOtherItem(ItemLib._S(), cc.controller, senderInfo.msgSender, ItemLib.ItemWithId(item, itemId), data, expectedKind);
+    ItemLib._destroy(cc, item, itemId, inSandbox);
   }
   //endregion ------------------------ Actions
 

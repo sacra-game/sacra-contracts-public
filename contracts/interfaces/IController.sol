@@ -36,9 +36,15 @@ interface IController {
 
   function guildController() external view returns (address);
 
+  function pvpController() external view returns (address);
+
   function rewardsPool() external view returns (address);
+
+  function itemBoxController() external view returns (address);
 
   function gameTokenPrice() external view returns (uint);
 
   function process(address token, uint amount, address from) external;
+
+  function gauge() external view returns (address);
 }

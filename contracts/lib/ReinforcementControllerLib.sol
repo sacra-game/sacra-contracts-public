@@ -68,7 +68,7 @@ library ReinforcementControllerLib {
   function onlyNotPausedEoaOwner(bool isEoa, IController controller, address msgSender, address heroToken, uint heroId) internal view {
     if (!isEoa) revert IAppErrors.ErrorOnlyEoa();
     if (controller.onPause()) revert IAppErrors.ErrorPaused();
-    if (IERC721(heroToken).ownerOf(heroId) != msgSender) revert IAppErrors.ErrorNotOwner(heroToken, heroId);
+    if (AppLib._ownerOf(heroToken, heroId) != msgSender) revert IAppErrors.ErrorNotOwner(heroToken, heroId);
   }
 
   function onlyDungeonFactory(IController controller) internal view {
@@ -88,6 +88,12 @@ library ReinforcementControllerLib {
 
     if (IDungeonFactory(controller.dungeonFactory()).currentDungeon(heroToken, heroId) != 0) revert IAppErrors.HeroInDungeon();
     if (isStaked(heroToken, heroId)) revert IAppErrors.AlreadyStaked();
+    address pvpController = controller.pvpController();
+    if (pvpController != address(0)) {
+      if (IPvpController(pvpController).isHeroStakedCurrently(heroToken, heroId)) revert IAppErrors.PvpStaked();
+    }
+
+    if (hc.sandboxMode(heroToken, heroId) == uint8(IHeroController.SandboxMode.SANDBOX_MODE_1)) revert IAppErrors.SandboxModeNotAllowed();
 
     return hc;
   }
@@ -102,6 +108,7 @@ library ReinforcementControllerLib {
     guildId = gc.memberOf(msgSender);
     if (guildId == 0) revert IAppErrors.NotGuildMember();
   }
+
   //endregion ------------------------ Restrictions
 
   //region ------------------------ VIEWS
@@ -113,19 +120,19 @@ library ReinforcementControllerLib {
     return s;
   }
 
-  function toHelperRatio(IController controller, address heroToken, uint heroId) internal view returns (uint) {
+  function toHelperRatio(IController controller, address heroToken, uint heroId) internal view returns (uint _toHelperRatio) {
     // Assume that this function is called by dungeonLib before reinforcement releasing
     // so for guild-reinforcement we can detect guild by guildHelperOf
     uint guildId = busyGuildHelperOf(heroToken, heroId);
     if (guildId == 0) {
       // Helper doesn't receive any reward at the end of the dungeon in Reinforcement V2
       // fixed reward-amount is paid to the helper in askHeroV2, that's all
-      return 0;
     }  else {
       // guild reinforcement
-      (, , , , , uint _toHelperRatio) = IGuildController(controller.guildController()).getGuildData(guildId);
-      return _toHelperRatio;
+      // assume that guildController is initialized
+      (, , , , , _toHelperRatio) = IGuildController(controller.guildController()).getGuildData(guildId);
     }
+    return _toHelperRatio;
   }
 
   function heroInfo(address heroToken, uint heroId) internal view returns (IReinforcementController.HeroInfo memory) {
@@ -209,10 +216,6 @@ library ReinforcementControllerLib {
     );
   }
 
-  function getFeeAmount(address gameToken, uint hitsLast24h, uint8 biome) internal view returns (uint feeAmount) {
-    return _getFeeAmount(gameToken, hitsLast24h, biome);
-  }
-
   function getHitsNumberPerLast24Hours(uint8 biome, uint blockTimestamp) internal view returns (uint hitsLast24h) {
     IReinforcementController.LastWindowsV2 memory stat24h = _S().stat24hV2[biome];
     (hitsLast24h, ) = getHitsNumberPerLast24Hours(blockTimestamp, BASKET_INTERVAL, stat24h);
@@ -282,7 +285,7 @@ library ReinforcementControllerLib {
   /// @notice For classic reinforcement: register reward in _S(), keep tokens on balance of this contract
   /// For guild reinforcement: re-send reward to the guild bank.
   /// @dev Only for dungeon. Assume the tokens already sent to this contract.
-  function registerTokenReward(IController controller, address heroToken, uint heroId, address token, uint amount) internal {
+  function registerTokenReward(IController controller, address heroToken, uint heroId, address token, uint amount, uint64 dungeonId) internal {
     onlyDungeonFactory(controller);
 
     uint guildId = busyGuildHelperOf(heroToken, heroId);
@@ -296,16 +299,17 @@ library ReinforcementControllerLib {
       emit IApplicationEvents.TokenRewardRegistered(heroToken, heroId, token, amount, existAmount + amount);
     } else {
       // guild reinforcement: send all rewards to guild bank
+      // assume that guildController is initialized
       address guildBank = IGuildController(controller.guildController()).getGuildBank(guildId);
       IERC20(token).transfer(guildBank, amount);
-      emit IApplicationEvents.GuildTokenRewardRegistered(heroToken, heroId, token, amount, guildId);
+      emit IApplicationEvents.GuildTokenRewardRegistered(heroToken, heroId, token, amount, guildId, dungeonId);
     }
   }
 
   /// @notice For classic reinforcement: register reward in _S(), keep the token on balance of this contract
   /// For guild reinforcement: re-send NFT-reward to the guild bank.
   /// @dev Only for dungeon. Assume the NFT already sent to this contract.
-  function registerNftReward(IController controller, address heroToken, uint heroId, address token, uint tokenId) internal {
+  function registerNftReward(IController controller, address heroToken, uint heroId, address token, uint tokenId, uint64 dungeonId) internal {
     onlyDungeonFactory(controller);
 
     uint guildId = busyGuildHelperOf(heroToken, heroId);
@@ -316,10 +320,11 @@ library ReinforcementControllerLib {
       emit IApplicationEvents.NftRewardRegistered(heroToken, heroId, token, tokenId);
     } else {
       // guild reinforcement: send all rewards to guild bank
+      // assume that guildController is initialized
       address guildBank = IGuildController(controller.guildController()).getGuildBank(guildId);
       IERC721(token).transferFrom(address(this), guildBank, tokenId);
 
-      emit IApplicationEvents.GuildNftRewardRegistered(heroToken, heroId, token, tokenId, guildId);
+      emit IApplicationEvents.GuildNftRewardRegistered(heroToken, heroId, token, tokenId, guildId, dungeonId);
     }
   }
 
@@ -391,7 +396,7 @@ library ReinforcementControllerLib {
   ) {
     onlyHeroController(controller);
 
-    address user = IERC721(hero).ownerOf(heroId);
+    address user = AppLib._ownerOf(hero, heroId);
     IReinforcementController.MainState storage s = _S();
     (IGuildController gc, uint guildId) = _memberOf(controller, user);
 
@@ -418,13 +423,10 @@ library ReinforcementControllerLib {
     bytes32 packedHero = helperHeroToken.packNftId(helperHeroTokenId);
     IReinforcementController.MainState storage s = _S();
 
-    address owner;
-    try IERC721(helperHeroToken).ownerOf(helperHeroTokenId) returns (address heroOwner) {
-      // there is a chance that the helperId is already burnt
-      // see test "use guild reinforcement - burn the helper-hero that is being used by reinforcement"
-      // so, we cannot check IERC721(helperHeroToken).ownerOf(helperHeroTokenId) here without try/catch
-      owner = heroOwner;
-    } catch {}
+    // there is a chance that the helperId is already burnt
+    // see test "use guild reinforcement - burn the helper-hero that is being used by reinforcement"
+    // so, we cannot check HeroBase(helperHeroToken).ownerOf(helperHeroTokenId) here without try/catch
+    address owner = getHeroTokenOwnerSafe(helperHeroToken, helperHeroTokenId);
 
     if (s.busyGuildHelpers[packedHero] == 0) revert IAppErrors.NotBusyGuildHelper();
 
@@ -444,7 +446,6 @@ library ReinforcementControllerLib {
   /// @param rewardAmount Reward required by the helper for the help.
   function stakeHeroV2(bool isEoa, IController controller, address msgSender, address heroToken, uint heroId, uint rewardAmount) internal {
     IReinforcementController.MainState storage s = _S();
-    onlyNotPausedEoaOwner(isEoa, controller, msgSender, heroToken, heroId);
 
     if (rewardAmount == 0) revert IAppErrors.ZeroAmount();
 
@@ -493,7 +494,7 @@ library ReinforcementControllerLib {
   /// Hero owner sends reward amount to the helper owner as the reward for the help.
   /// Hero owner sends fixed fee to controller using standard process-routine.
   /// Size of the fixed fee depends on total number of calls of {askHeroV2} for last 24 hours since the current moment.
-  /// Durability of all equipped items of the helper are reduced.
+  /// Durability of all equipped items (including skills) of the helper are reduced.
   /// Assume, that hero owner approves rewardAmount + fixed fee to reinforcementController-contract
   /// - rewardAmount: amount required by the helper (see {heroInfoV2})
   /// - fixed fee: fee taken by controller (see {getFeeAmount})
@@ -501,44 +502,46 @@ library ReinforcementControllerLib {
     int32[] memory attributes
   ) {
     // assume that the signer (HeroController) has checked that the hero and helper are registered, controller is not paused
-    uint8 heroBiome;
-    {
-      address heroController = onlyHeroController(controller);
-      heroBiome = IHeroController(heroController).heroBiome(hero, heroId);
-    }
-
-    address gameToken = controller.gameToken();
+    // signer (HeroController) is checked inside _prepareAskHeroV2
+    (address gameToken, uint8 heroBiome, uint hitsLast24h, uint fixedFee) = _prepareAskHeroV2(controller, hero, heroId, blockTimestamp);
 
     IReinforcementController.HeroInfoV2 memory _heroInfo = _S().stakedHeroesV2[helper.packNftId(helperId)];
     if (_heroInfo.biome != heroBiome) revert IAppErrors.HelperNotAvailableInGivenBiome();
 
-    // calculate number of calls for the last 24 hours starting from the current moment
-    uint hitsLast24h = _getHitsLast24h(heroBiome, blockTimestamp);
+    IERC20(gameToken).transferFrom(AppLib._ownerOf(hero, heroId), address(this), fixedFee + _heroInfo.rewardAmount);
 
-    // calculate fixed fee and send it to the treasury
-    uint fixedFee = _getFeeAmount(gameToken, hitsLast24h, heroBiome);
-
-    {
-      address heroOwner = IERC721(hero).ownerOf(heroId);
-      IERC20(gameToken).transferFrom(heroOwner, address(this), fixedFee + _heroInfo.rewardAmount);
-    }
-
-    { // send reward amount from msgSender to helper
-      address helperOwner = IERC721(helper).ownerOf(helperId);
-      IERC20(gameToken).transfer(helperOwner, _heroInfo.rewardAmount);
-    }
+    // send reward amount from msgSender to helper
+    IERC20(gameToken).transfer(AppLib._ownerOf(helper, helperId), _heroInfo.rewardAmount);
 
     AppLib.approveIfNeeded(gameToken, fixedFee, address(controller));
     controller.process(gameToken, fixedFee, address(this));
 
     attributes = _getReinforcementAttributes(controller, helper, helperId);
 
-    // reduceDurability of all equipped items of the helper
+    // reduceDurability of all equipped items (including skills) of the helper
     IItemController(controller.itemController()).reduceDurability(helper, helperId, heroBiome, true);
 
     emit IApplicationEvents.HeroAskV2(helper, helperId, hitsLast24h, fixedFee, _heroInfo.rewardAmount);
 
     return attributes;
+  }
+
+  function _prepareAskHeroV2(IController controller, address hero, uint heroId, uint blockTimestamp) internal returns (
+    address gameToken,
+    uint8 heroBiome,
+    uint hitsLast24h,
+    uint fixedFee
+  ) {
+    gameToken = controller.gameToken();
+
+    address heroController = onlyHeroController(controller);
+    heroBiome = IHeroController(heroController).heroBiome(hero, heroId);
+
+    // calculate number of calls for the last 24 hours starting from the current moment
+    hitsLast24h = _getHitsLast24h(heroBiome, blockTimestamp);
+
+    // calculate fixed fee and send it to the treasury
+    fixedFee = getFeeAmount(gameToken, hitsLast24h, heroBiome, IHeroController(heroController).getHeroInfo(hero, heroId).ngLevel);
   }
 
   //endregion ------------------------ Reinforcement V2
@@ -644,7 +647,7 @@ library ReinforcementControllerLib {
   //region ------------------------ Fixed fee calculation V2
 
   /// @notice hitsLast24h Number of hits per last 24 hours, decimals 18
-  function _getFeeAmount(address gameToken, uint hitsLast24h, uint8 biome) internal view returns (uint) {
+  function getFeeAmount(address gameToken, uint hitsLast24h, uint8 biome, uint8 heroNgLevel) internal view returns (uint) {
 
     // get min-max range for the burn fee
     (uint32 minNumberHits, uint32 maxNumberHits, uint32 lowDivider, uint32 highDivider,) = getConfigV2();
@@ -655,7 +658,7 @@ library ReinforcementControllerLib {
     // we should pass heroBiome EXACTLY same to dungeonBiomeLevel
     // to avoid reducing base because of the difference heroBiome and dungeonBiomeLevel, see {amountForDungeon}
     IMinter minter = IMinter(IGameToken(gameToken).minter());
-    uint amountForDungeon = minter.amountForDungeon(biome, biome) * 10;
+    uint amountForDungeon = AppLib._getAdjustedReward(minter.amountForDungeon(biome, biome), heroNgLevel) * 10;
 
     // calculate fee
     if (hitsLast24h < min) hitsLast24h = min;
@@ -721,4 +724,20 @@ library ReinforcementControllerLib {
     return (hitsLast24h, s);
   }
   //endregion ------------------------ Fixed fee calculation V2
+
+  //region ------------------------ Common utils
+  /// @return heroOwner Return token owner or zero address if the hero token is burnt
+  function getHeroTokenOwnerSafe(address heroToken, uint heroTokenId) internal view returns (address heroOwner) {
+    if (heroToken == address(0) || heroTokenId == 0) return address(0);
+
+    try IERC721(heroToken).ownerOf(heroTokenId) returns (address owner) {
+      // there is a chance that the hero token is already burnt
+      // so, we cannot call {ownerOf} without try/catch
+      heroOwner = owner;
+    } catch {}
+
+    return heroOwner;
+  }
+
+  //endregion ------------------------ Common utils
 }

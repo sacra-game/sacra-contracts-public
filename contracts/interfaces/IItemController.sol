@@ -102,6 +102,11 @@ interface IItemController {
     /// {packedMetaData} is encoded using abi.encode/abi.decode
     /// Read first byte, detect meta data type by the byte value, apply proper decoder from PackingLib
     mapping(address item => bytes packedMetaData) packedItemMetaData;
+
+    /// --------------------------------- SCR-1263: Reverse-augmentation
+    /// @notice Item attributes values before first augmentation.
+    /// @dev SCR-1263: The values are required in augmentation if protective item is used and the augmentation is failed.
+    mapping(bytes32 packedItem => ResetAugmentationData) _resetAugmentation;
   }
 
   struct RegisterItemParams {
@@ -123,10 +128,8 @@ interface IItemController {
 
   /// @notice Possible actions that can be triggered by using the consumable item
   enum ConsumableActionBits {
-    CLEAR_TEMPORARY_ATTRIBUTES_0,
-    EXIT_FROM_DUNGEON_1,
-    RESERVED_2,
-    REST_IN_SHELTER_3
+    CLEAR_TEMPORARY_ATTRIBUTES_0
+    // other items are used instead this mask
   }
 
   struct ItemGenerateInfo {
@@ -266,6 +269,17 @@ interface IItemController {
     /// @notice This item allows asking guild reinforcement to the guild member
     USE_GUILD_REINFORCEMENT_2,
 
+    /// @notice Exit from dungeon (shelter of level 3 is required)
+    EXIT_FROM_DUNGEON_3,
+
+    /// @notice OTHER_5 Rest in the shelter: restore of hp & mp, clear temporally attributes, clear used consumables (shelter of level 3 is required)
+    /// @dev It's OTHER_5 in deploy script, but internally it has subtype 4, see gen_others.ts
+    REST_IN_SHELTER_4,
+
+    /// @notice OTHER_4 Stub item that has no logic in contracts, but it has correct (not empty) packedMetaData
+    /// @dev It's OTHER_4 in deploy script, but internally it has subtype 5, see gen_others.ts
+    EMPTY_NO_LOGIC_5,
+
     END_SLOT
   }
   struct OtherItemReduceFragility {
@@ -277,6 +291,35 @@ interface IItemController {
     uint248 value;
   }
   ///endregion ------------------------ Item type "Other"
+
+  struct AugmentOptParams {
+    /// @notice Optional protective item
+    /// @dev SCR-1263: If the protective item specified
+    /// than failed augmentation doesn't destroy main item but reduces its augmentation level to the zero instead.
+    /// Protective item is configured in ItemControllerHelper.
+    address protectiveItem;
+    uint protectiveItemId;
+  }
+
+  struct ResetAugmentationData {
+    /// @notice Moment of the first augmentation if any
+    uint tsFirstAugmentation;
+
+    /// @notice Values of the item attributes before the first augmentation
+    /// @dev Use PackingLib.toInt32ArrayWithIds to decode attribute ids and values
+    bytes32[] itemAttributes;
+
+    /// @notice Values of the caster attributes before the first augmentation
+    /// @dev Use PackingLib.toInt32ArrayWithIds to decode attribute ids and values
+    bytes32[] itemCasterAttributes;
+
+    /// @notice Values of the target attributes before the first augmentation
+    /// @dev Use PackingLib.toInt32ArrayWithIds to decode attribute ids and values
+    bytes32[] itemTargetAttributes;
+
+    /// @notice packed AttackInfo: attackType8 + min32 + max32 + factors(packed core 128)
+    bytes32 itemAttackInfo;
+  }
 
   ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -316,7 +359,7 @@ interface IItemController {
 
   // ---
 
-  function mint(address item, address recipient) external returns (uint itemId);
+  function mint(address item, address recipient, uint32 magicFind) external returns (uint itemId);
 
   function reduceDurability(address hero, uint heroId, uint8 biome, bool reduceDurabilityAllSkills) external;
 
@@ -346,4 +389,6 @@ interface IItemController {
     uint[] calldata itemIds,
     uint8[] calldata itemSlots
   ) external;
+
+  function itemControllerHelper() external view returns (address);
 }

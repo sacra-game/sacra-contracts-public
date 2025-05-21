@@ -63,7 +63,7 @@ interface IStatController {
     // --- unique, not augmentable
     // hero will not die until have positive chances
     LIFE_CHANCES, // 22
-    // increase chance to get an item
+    // increase chance to get a better item
     MAGIC_FIND, // 23
     // decrease chance to get an item
     DESTROY_ITEMS, // 24
@@ -102,7 +102,7 @@ interface IStatController {
     // reduce chance get any of uniq statuses
     RESIST_TO_STATUSES, // 42
 
-    END_SLOT // 46
+    END_SLOT // 43
   }
 
   // possible
@@ -173,7 +173,7 @@ interface IStatController {
   }
 
   /// @dev This struct is used inside event, so it's moved here from lib
-  struct ActionInternalInfo {
+  struct EventActionInfo {
     int32[] posAttributes;
     int32[] negAttributes;
 

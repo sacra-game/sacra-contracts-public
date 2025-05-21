@@ -15,6 +15,8 @@ import "../interfaces/IHeroController.sol";
 import "../interfaces/IUserController.sol";
 import "../interfaces/IGuildController.sol";
 import "../interfaces/IRewardsPool.sol";
+import "../interfaces/IPvpController.sol";
+import "../interfaces/IItemBoxController.sol";
 
 /// @notice Provide context-struct with all controller addresses and routines for lazy init
 /// Usage:
@@ -23,118 +25,116 @@ import "../interfaces/IRewardsPool.sol";
 ///       access controller directly
 ///               cc.controller.xxx();
 ///       access other contracts indirectly
-///               sc = ControllerContextLib.getStatController(cc);
+///               sc = ControllerContextLib.statController(cc);
 library ControllerContextLib {
-  struct ControllerContext {
-    IController controller;
-    IStatController statController;
-    IStoryController storyController;
-    IOracle oracle;
-    ITreasury treasury;
-    IDungeonFactory dungeonFactory;
-    IGOC gameObjectController;
-    IReinforcementController reinforcementController;
-    IItemController itemController;
-    IHeroController heroController;
-    IGameToken gameToken;
-    IUserController userController;
-    IGuildController guildController;
-    IRewardsPool rewardsPool;
+  //region ----------------- Data types
+  enum CacheIndex {
+    STAT_CONTROLLER_0,
+    STORY_CONTROLLER_1,
+    ORACLE_2,
+    TREASURY_3,
+    DUNGEON_FACTORY_4,
+    GOC_5,
+    REINFORCEMENT_CONTROLLER_6,
+    ITEM_CONTROLLER_7,
+    HERO_CONTROLLER_8,
+    GAME_TOKEN_9,
+    USER_CONTROLLER_10,
+    GUILD_CONTROLLER_11,
+    PVP_CONTROLLER_12,
+    REWARDS_POOL_13,
+    ITEM_BOX_CONTROLLER_14
   }
 
+  uint constant private CACHE_SIZE = 15;
+
+  struct ControllerContext {
+    /// @notice Direct access to the controller
+    IController controller;
+
+    /// @notice All lazy-initialized addresses in order of {CacheIndex}
+    address[CACHE_SIZE] cache;
+  }
+  //endregion ----------------- Data types
+
+  //region ----------------- Initialization and _lazyInit
   function init(IController controller) internal pure returns (ControllerContext memory cc) {
     cc.controller = controller;
     return cc;
   }
 
-  function getStatController(ControllerContext memory cc) internal view returns (IStatController statController) {
-    if (address(cc.statController) == address(0)) {
-      cc.statController = IStatController(cc.controller.statController());
-    }
-    return cc.statController;
+  function _lazyInit(
+    ControllerContext memory cc,
+    CacheIndex index,
+    function () external view returns(address) getter
+  ) internal view returns (address) {
+    address a = cc.cache[uint(index)];
+    if (a != address(0)) return a;
+
+    cc.cache[uint(index)] = getter();
+    return cc.cache[uint(index)];
+  }
+  //endregion ----------------- Initialization and _lazyInit
+
+  //region ----------------- Access with lazy initialization
+  function statController(ControllerContext memory cc) internal view returns (IStatController) {
+    return IStatController(_lazyInit(cc, CacheIndex.STAT_CONTROLLER_0, cc.controller.statController));
   }
 
-  function getStoryController(ControllerContext memory cc) internal view returns (IStoryController storyController) {
-    if (address(cc.storyController) == address(0)) {
-      cc.storyController = IStoryController(cc.controller.storyController());
-    }
-    return cc.storyController;
+  function storyController(ControllerContext memory cc) internal view returns (IStoryController) {
+    return IStoryController(_lazyInit(cc, CacheIndex.STORY_CONTROLLER_1, cc.controller.storyController));
   }
 
-  function getOracle(ControllerContext memory cc) internal view returns (IOracle oracle) {
-    if (address(cc.oracle) == address(0)) {
-      cc.oracle = IOracle(cc.controller.oracle());
-    }
-    return cc.oracle;
+  function oracle(ControllerContext memory cc) internal view returns (IOracle) {
+    return IOracle(_lazyInit(cc, CacheIndex.ORACLE_2, cc.controller.oracle));
   }
 
-  function getTreasury(ControllerContext memory cc) internal view returns (ITreasury treasury) {
-    if (address(cc.treasury) == address(0)) {
-      cc.treasury = ITreasury(cc.controller.treasury());
-    }
-    return cc.treasury;
+  function treasury(ControllerContext memory cc) internal view returns (ITreasury) {
+    return ITreasury(_lazyInit(cc, CacheIndex.TREASURY_3, cc.controller.treasury));
   }
 
-  function getDungeonFactory(ControllerContext memory cc) internal view returns (IDungeonFactory dungeonFactory) {
-    if (address(cc.dungeonFactory) == address(0)) {
-      cc.dungeonFactory = IDungeonFactory(cc.controller.dungeonFactory());
-    }
-    return cc.dungeonFactory;
+  function dungeonFactory(ControllerContext memory cc) internal view returns (IDungeonFactory) {
+    return IDungeonFactory(_lazyInit(cc, CacheIndex.DUNGEON_FACTORY_4, cc.controller.dungeonFactory));
   }
 
-  function getGameObjectController(ControllerContext memory cc) internal view returns (IGOC gameObjectController) {
-    if (address(cc.gameObjectController) == address(0)) {
-      cc.gameObjectController = IGOC(cc.controller.gameObjectController());
-    }
-    return cc.gameObjectController;
+  function gameObjectController(ControllerContext memory cc) internal view returns (IGOC) {
+    return IGOC(_lazyInit(cc, CacheIndex.GOC_5, cc.controller.gameObjectController));
   }
 
-  function getReinforcementController(ControllerContext memory cc) internal view returns (IReinforcementController reinforcementController) {
-    if (address(cc.reinforcementController) == address(0)) {
-      cc.reinforcementController = IReinforcementController(cc.controller.reinforcementController());
-    }
-    return cc.reinforcementController;
+  function reinforcementController(ControllerContext memory cc) internal view returns (IReinforcementController) {
+    return IReinforcementController(_lazyInit(cc, CacheIndex.REINFORCEMENT_CONTROLLER_6, cc.controller.reinforcementController));
   }
 
-  function getItemController(ControllerContext memory cc) internal view returns (IItemController itemController) {
-    if (address(cc.itemController) == address(0)) {
-      cc.itemController = IItemController(cc.controller.itemController());
-    }
-    return cc.itemController;
+  function itemController(ControllerContext memory cc) internal view returns (IItemController) {
+    return IItemController(_lazyInit(cc, CacheIndex.ITEM_CONTROLLER_7, cc.controller.itemController));
   }
 
-  function getHeroController(ControllerContext memory cc) internal view returns (IHeroController heroController) {
-    if (address(cc.heroController) == address(0)) {
-      cc.heroController = IHeroController(cc.controller.heroController());
-    }
-    return cc.heroController;
+  function heroController(ControllerContext memory cc) internal view returns (IHeroController) {
+    return IHeroController(_lazyInit(cc, CacheIndex.HERO_CONTROLLER_8, cc.controller.heroController));
   }
 
-  function getGameToken(ControllerContext memory cc) internal view returns (IGameToken gameToken) {
-    if (address(cc.gameToken) == address(0)) {
-      cc.gameToken = IGameToken(cc.controller.gameToken());
-    }
-    return cc.gameToken;
+  function gameToken(ControllerContext memory cc) internal view returns (IGameToken) {
+    return IGameToken(_lazyInit(cc, CacheIndex.GAME_TOKEN_9, cc.controller.gameToken));
   }
 
-  function getUserController(ControllerContext memory cc) internal view returns (IUserController userController) {
-    if (address(cc.userController) == address(0)) {
-      cc.userController = IUserController(cc.controller.userController());
-    }
-    return cc.userController;
+  function userController(ControllerContext memory cc) internal view returns (IUserController) {
+    return IUserController(_lazyInit(cc, CacheIndex.USER_CONTROLLER_10, cc.controller.userController));
   }
 
-  function getGuildController(ControllerContext memory cc) internal view returns (IGuildController guildController) {
-    if (address(cc.guildController) == address(0)) {
-      cc.guildController = IGuildController(cc.controller.guildController());
-    }
-    return cc.guildController;
+  function guildController(ControllerContext memory cc) internal view returns (IGuildController) {
+    return IGuildController(_lazyInit(cc, CacheIndex.GUILD_CONTROLLER_11, cc.controller.guildController));
   }
 
-  function getRewardsPool(ControllerContext memory cc) internal view returns (IRewardsPool rewardsPool) {
-    if (address(cc.rewardsPool) == address(0)) {
-      cc.rewardsPool = IRewardsPool(cc.controller.rewardsPool());
-    }
-    return cc.rewardsPool;
+  function pvpController(ControllerContext memory cc) internal view returns (IPvpController) {
+    return IPvpController(_lazyInit(cc, CacheIndex.PVP_CONTROLLER_12, cc.controller.pvpController));
   }
+
+  function rewardsPool(ControllerContext memory cc) internal view returns (IRewardsPool) {
+    return IRewardsPool(_lazyInit(cc, CacheIndex.REWARDS_POOL_13, cc.controller.rewardsPool));
+  }
+
+  function itemBoxController(ControllerContext memory cc) internal view returns (IItemBoxController) {
+    return IItemBoxController(_lazyInit(cc, CacheIndex.ITEM_BOX_CONTROLLER_14, cc.controller.itemBoxController));
+  }
+  //endregion ----------------- Access with lazy initialization
 }

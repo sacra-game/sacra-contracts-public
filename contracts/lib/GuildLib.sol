@@ -46,6 +46,11 @@ library GuildLib {
     if (controller.governance() != msg.sender) revert IAppErrors.NotGovernance(msg.sender);
   }
 
+
+  function _onlyPvpController(IController controller) internal view {
+    if (controller.pvpController() != msg.sender) revert IAppErrors.NotPvpController();
+  }
+
   function _onlyDeployer(IController controller) internal view {
     if (!controller.isDeployer(msg.sender)) revert IAppErrors.ErrorNotDeployer(msg.sender);
   }
@@ -128,6 +133,10 @@ library GuildLib {
 
   function getGuildDescription(uint guildId) internal view returns (string memory) {
     return _S().guildDescription[guildId];
+  }
+
+  function getGuildBanner(uint guildId) internal view returns (string memory) {
+    return _S().guildBanner[guildId];
   }
 
   function getUserPvpPoints(uint guildId, address user) internal view returns (uint64 capacityPvpPoints, uint64 spentPvpPoints) {
@@ -435,7 +444,7 @@ library GuildLib {
 
   /// @notice Remove given member from the guild to which msgSender belongs
   /// @dev To delete the guild the owner should remove all members and remove himself at the end
-  function removeGuildMember(IController controller, address msgSender, address userToRemove) internal {
+  function removeGuildMember(IController controller, address msgSender, address userToRemove) external {
     uint guildId;
     if (msgSender == userToRemove) {
       _notPaused(controller);
@@ -474,9 +483,13 @@ library GuildLib {
     // The heroes are NOT withdrawn automatically, the member is responsible to withdraw them himself
     // All rewards for staked heroes will continue to be transferred to guild bank until the heroes are withdrawn.
 
+    // The member being removed may have staked hero in PvpController.
+    // In the current epoch pvp-staked hero will earn guild-points to the guild from which the user will be removed
+    // until the user will remove him.
+
     uint guildSize = _S().members[guildId].length();
     if (guildSize == 0) {
-      _deleteGuild(guildId, guildData);
+      _deleteGuild(controller, guildId, guildData);
     }
   }
 
@@ -538,6 +551,17 @@ library GuildLib {
     emit IApplicationEvents.GuildDescriptionChanged(guildId, newDescription);
   }
 
+  function changeBanner(IController controller, address msgSender, string memory newBanner) external {
+    (uint guildId,) = _checkPermissions(controller, msgSender, IGuildController.GuildRightBits.CHANGE_LOGO_2);
+
+    _onlyValidLogo(newBanner);
+
+    // free change (no payment)
+    _S().guildBanner[guildId] = newBanner;
+
+    emit IApplicationEvents.GuildBannerChanged(guildId, newBanner);
+  }
+
   /// @notice Set relation between two guilds
   function setRelation(IController controller, address msgSender, uint otherGuildId, bool peace) internal {
     (uint guildId,) = _checkPermissions(controller, msgSender, IGuildController.GuildRightBits.SET_RELATION_KIND_9);
@@ -556,6 +580,12 @@ library GuildLib {
     _S().guildData[guildId].toHelperRatio = value;
 
     emit IApplicationEvents.SetToHelperRatio(guildId, value, msgSender);
+  }
+
+  function incPvpCounter(IController controller, uint guildId, uint64 value) external {
+    _onlyPvpController(controller);
+
+    _S().guildData[guildId].pvpCounter += value;
   }
 
   function setPvpPointsCapacity(IController controller, address msgSender, uint64 capacityPvpPoints, address[] memory users) external {
@@ -580,6 +610,8 @@ library GuildLib {
     _S().rights[msgSender] = 0;
     _S().rights[newAdmin] = _getMaskRights(IGuildController.GuildRightBits.ADMIN_0);
     _S().guildData[oldAdminGuildId].owner = newAdmin;
+
+    emit IApplicationEvents.TransferOwnership(msgSender, newAdmin);
   }
   //endregion ------------------------ Actions
 
@@ -755,7 +787,7 @@ library GuildLib {
   }
 
   /// @notice Delete the guild as soon as last member has left it
-  function _deleteGuild(uint guildId, IGuildController.GuildData memory guildData) internal{
+  function _deleteGuild(IController controller, uint guildId, IGuildController.GuildData memory guildData) internal {
 
     delete _S().nameToGuild[guildData.guildName];
     delete _S().guildData[guildId];
@@ -772,6 +804,11 @@ library GuildLib {
     if (shelterAuction != address(0)) {
       (uint positionId, ) = IShelterAuction(shelterAuction).positionByBuyer(guildId);
       if (positionId != 0) revert IAppErrors.AuctionBidOpened(positionId);
+    }
+
+    address pvpController = controller.pvpController();
+    if (pvpController != address(0)) {
+      IPvpController(pvpController).onGuildDeletion(guildId);
     }
 
     emit IApplicationEvents.GuildDeleted(guildId);

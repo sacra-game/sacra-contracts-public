@@ -3,12 +3,13 @@
 pragma solidity 0.8.23;
 
 import "../interfaces/IGOC.sol";
-import "../interfaces/IStatController.sol";
 import "../interfaces/IItemController.sol";
-import "./IController.sol";
-import "./IOracle.sol";
-import "./IHeroController.sol";
+import "../interfaces/IStatController.sol";
+import "../lib/ControllerContextLib.sol";
 import "../openzeppelin/EnumerableSet.sol";
+import "./IController.sol";
+import "./IHeroController.sol";
+import "./IOracle.sol";
 
 interface IStoryController {
 
@@ -142,6 +143,9 @@ interface IStoryController {
     /// @dev hero, heroId, story => mintedInIteration
     /// This map is not cleared: storyId:objectId is 1:1, each object has own sequence of iterations without duplicates
     mapping(bytes32 => mapping(uint iteration => uint countMintedItems)) mintedInIteration;
+
+    /// @notice True if the story is allowed to be skipped, see SCR-1248
+    EnumerableSet.UintSet skippableStory;
   }
 
   /// @dev We need to have flat structure coz Solidity can not handle arrays of structs properly
@@ -321,11 +325,7 @@ interface IStoryController {
     address sender;
     address heroToken;
     IController controller;
-    IStatController statController;
-    IHeroController heroController;
     IOracle oracle;
-    IItemController itemController;
-    uint8 heroClass;
     uint8 heroClassFromAnswerHash;
     uint8 biome;
     uint16 storyId;
@@ -366,4 +366,5 @@ interface IStoryController {
 
   function registeredStories(uint32 objectId) external view returns (bool);
 
+  function skippableStory(uint16 storyId) external view returns (bool);
 }

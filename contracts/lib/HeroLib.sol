@@ -19,6 +19,7 @@ library HeroLib {
   using PackingLib for address;
   using PackingLib for bytes32;
 
+  //region ------------------------ Constants
   /// @dev keccak256(abi.encode(uint256(keccak256("hero.controller.main")) - 1)) & ~bytes32(uint256(0xff))
   bytes32 private constant HERO_CONTROLLER_STORAGE_LOCATION = 0xd333325b749986e76669f0e0c2c1aa0e0abd19e216c3678477196e4089241400;
   uint public constant KILL_PENALTY = 70;
@@ -33,6 +34,7 @@ library HeroLib {
   /// @notice Cost of level up in game token, final amount is adjusted by game token price
   /// @dev The case: payToken for the hero is changed, postpaid hero makes level up, base amount should be paid.
   uint public constant BASE_AMOUNT_LEVEL_UP = 10e18;
+  //endregion ------------------------ Constants
 
   //region ------------------------ Storage
 
@@ -45,9 +47,25 @@ library HeroLib {
   //endregion ------------------------ Storage
 
   //region ------------------------ Restrictions
+  function onlyEOA(bool isEoa) internal view {
+    if (!isEoa) {
+      revert IAppErrors.NotEOA(msg.sender);
+    }
+  }
 
-  function onlyDungeonFactory(address dungeonFactory, address sender) internal pure {
-    if (dungeonFactory != sender) revert IAppErrors.ErrorNotDungeonFactory(sender);
+  function onlyDeployer(IController controller) internal view {
+    if (! controller.isDeployer(msg.sender)) revert IAppErrors.ErrorNotDeployer(msg.sender);
+  }
+
+  function onlyDungeonFactory(IDungeonFactory dungeonFactory, address sender) internal pure {
+    if (address(dungeonFactory) != sender) revert IAppErrors.ErrorNotDungeonFactory(sender);
+  }
+
+  function onlyDungeonFactoryOrPvpController(IController controller, address sender) internal view {
+    if (
+      address(_getDungeonFactory(controller)) != sender
+      && address(_getPvpController(controller)) != sender
+    ) revert IAppErrors.ErrorNotAllowedSender();
   }
 
   function onlyOwner(address token, uint tokenId, address sender) internal view {
@@ -55,7 +73,22 @@ library HeroLib {
   }
 
   function onlyNotStaked(IController controller_, address hero, uint heroId) internal view {
-    if (IReinforcementController(controller_.reinforcementController()).isStaked(hero, heroId)) revert IAppErrors.Staked(hero, heroId);
+    if (_getReinforcementController(controller_).isStaked(hero, heroId)) revert IAppErrors.Staked(hero, heroId);
+
+    IPvpController pc = _getPvpController(controller_);
+    if (address(pc) != address(0) && pc.isHeroStakedCurrently(hero, heroId)) revert IAppErrors.PvpStaked();
+  }
+
+  function checkSandboxMode(bytes32 packedHero, bool sandboxRequired) internal view {
+    bool isSandboxMode = _S().sandbox[packedHero] == IHeroController.SandboxMode.SANDBOX_MODE_1;
+
+    if (isSandboxMode != sandboxRequired) {
+      if (sandboxRequired) {
+        revert IAppErrors.SandboxModeRequired();
+      } else {
+        revert IAppErrors.SandboxModeNotAllowed();
+      }
+    }
   }
 
   function onlyInDungeon(IDungeonFactory dungeonFactory, address hero, uint heroId) internal view {
@@ -84,6 +117,10 @@ library HeroLib {
     if (c.onPause()) revert IAppErrors.ErrorPaused();
   }
 
+  function onlyAlive(IStatController statController, address hero, uint heroId) internal view {
+    if (!statController.isHeroAlive(hero, heroId)) revert IAppErrors.ErrorHeroIsDead(hero, heroId);
+  }
+
   function _checkOutDungeonNotStakedAlive(IController c, address hero, uint heroId) internal view returns (
     IDungeonFactory dungFactory,
     IStatController statController
@@ -93,7 +130,7 @@ library HeroLib {
 
     onlyNotInDungeon(dungFactory, hero, heroId);
     onlyNotStaked(c, hero, heroId);
-    if (!statController.isHeroAlive(hero, heroId)) revert IAppErrors.ErrorHeroIsDead(hero, heroId);
+    onlyAlive(statController, hero, heroId);
   }
   //endregion ------------------------ Restrictions
 
@@ -115,11 +152,35 @@ library HeroLib {
     return _S().maxUserNgLevel[user];
   }
 
+  function helperSkills(address hero, uint heroId) internal view returns (
+    address[] memory items,
+    uint[] memory itemIds,
+    uint[] memory slots
+  ) {
+    bytes32[] memory skills = _S().helperSkills[PackingLib.packNftId(hero, heroId)];
+    uint len = skills.length;
+    if (len != 0) {
+      items = new address[](len);
+      itemIds = new uint[](len);
+      slots = new uint[](len);
+      for (uint i; i < len; ++i) {
+        (items[i], itemIds[i], slots[i]) = skills[i].unpackNftIdWithValue();
+      }
+    }
+
+    return (items, itemIds, slots);
+  }
   //endregion ------------------------ Views
 
   //region ------------------------ Gov actions
 
-  function registerHero(address hero, uint8 heroClass, address payToken, uint payAmount) internal {
+  function registerHero(IController controller, address hero, uint8 heroClass, address payToken, uint payAmount) internal {
+    onlyDeployer(controller);
+
+    // pay token cannot be 0 even for free heroes
+    // the reason: old F2P free heroes didn't have pay tokens, we should have a way to distinguish new heroes from them
+    if (payToken == address(0)) revert IAppErrors.ZeroToken();
+
     _S().heroClass[hero] = heroClass;
     _S().payToken[hero] = payToken.packAddressWithAmount(payAmount);
 
@@ -131,7 +192,8 @@ library HeroLib {
   /// @notice Set hero biome to {biome}, ensure that it's allowed
   /// @param msgSender Sender must be the owner of the hero
   /// @param biome New biome value: (0, maxBiomeCompleted + 1]
-  function setBiome(IController controller, address msgSender, address hero, uint heroId, uint8 biome) internal {
+  function setBiome(bool isEoa, IController controller, address msgSender, address hero, uint heroId, uint8 biome) internal {
+    onlyEOA(isEoa);
     onlyOwner(hero, heroId, msgSender);
     _checkRegisteredNotPaused(controller, hero);
     (IDungeonFactory dungFactory, ) = _checkOutDungeonNotStakedAlive(controller, hero, heroId);
@@ -147,12 +209,14 @@ library HeroLib {
 
   /// @notice Set level up according to {change}, call process() to take (payTokenAmount * level) from the sender
   function levelUp(
+    bool isEoa,
     IController controller,
     address msgSender,
     address hero,
     uint heroId,
     IStatController.CoreAttributes memory change
   ) internal {
+    onlyEOA(isEoa);
     onlyOwner(hero, heroId, msgSender);
     _checkRegisteredNotPaused(controller, hero);
     _checkOutDungeonNotStakedAlive(controller, hero, heroId);
@@ -160,12 +224,12 @@ library HeroLib {
     IHeroController.HeroInfo memory heroInfo = getHeroInfo(hero, heroId);
 
     // update stats
-    IStatController _statController = IStatController(controller.statController());
+    IStatController _statController = _getStatController(controller);
     uint level = _statController.levelUp(hero, heroId, _S().heroClass[hero], change);
 
     // NG+ has free level up
     // all heroes created before NG+ and not upgraded to NG+ require payment as before
-    if (heroInfo.paidToken == address(0)) {
+    if (heroInfo.tier == HeroLib.TIER_DEFAULT) {
       address gameToken = controller.gameToken();
       (address token, uint payTokenAmount) = _S().payToken[hero].unpackAddressWithAmount();
       if (token == address(0)) revert IAppErrors.NoPayToken(token, payTokenAmount);
@@ -185,28 +249,19 @@ library HeroLib {
   //endregion ------------------------ User actions: setBiome, levelUp
 
   //region ------------------------ User actions: reinforcement
-
-  /// @notice Ask random other-hero for reinforcement
-  function askReinforcement(IController controller, address msgSender, address hero, uint heroId, address helper, uint helperId) internal {
-    onlyOwner(hero, heroId, msgSender);
-    _askReinforcement(controller, hero, heroId, false, helper, helperId);
-  }
-
-  /// @notice Ask random staked guild-hero for reinforcement
-  function askGuildReinforcement(IController controller, address hero, uint heroId, address helper, uint helperId) internal {
-    _askReinforcement(controller, hero, heroId, true, helper, helperId);
-  }
-
   function _askReinforcement(IController controller, address hero, uint heroId, bool guildReinforcement, address helper, uint helperId) internal {
     _checkRegisteredNotPaused(controller, hero);
 
-    onlyInDungeon(IDungeonFactory(controller.dungeonFactory()), hero, heroId);
+    onlyInDungeon(_getDungeonFactory(controller), hero, heroId);
 
     bytes32 packedHero = hero.packNftId(heroId);
     if (_S().reinforcementHero[packedHero] != bytes32(0)) revert IAppErrors.AlreadyHaveReinforcement();
 
-    IStatController _statController = IStatController(controller.statController());
-    IReinforcementController rc = IReinforcementController(controller.reinforcementController());
+    IStatController _statController = _getStatController(controller);
+    IReinforcementController rc = _getReinforcementController(controller);
+
+    // Save all skills equipped on the hero's helper at the moment of asking reinforcement
+    _S().helperSkills[packedHero] = _getHeroSkills(_statController, helper, helperId);
 
     // scb-1009: Life and mana are restored during reinforcement as following:
     // Reinforcement increases max value of life/mana on DELTA, current value of life/mana is increased on DELTA too
@@ -243,7 +298,7 @@ library HeroLib {
     address helperToken,
     uint helperId
   ) {
-    onlyDungeonFactory(controller.dungeonFactory(), msgSender);
+    onlyDungeonFactory(_getDungeonFactory(controller), msgSender);
     onlyRegisteredHero(hero);
 
     bytes32 packedId = hero.packNftId(heroId);
@@ -251,7 +306,7 @@ library HeroLib {
     (helperToken, helperId) = _S().reinforcementHero[packedId].unpackNftId();
 
     if (helperToken != address(0)) {
-      IStatController _statController = IStatController(controller.statController());
+      IStatController _statController = _getStatController(controller);
 
       int32[] memory attributes = _S().reinforcementHeroAttributes[packedId].toInt32Array(uint(IStatController.ATTRIBUTES.END_SLOT));
 
@@ -263,10 +318,11 @@ library HeroLib {
         temporally: false
       }));
 
+      delete _S().helperSkills[packedId];
       delete _S().reinforcementHero[packedId];
       delete _S().reinforcementHeroAttributes[packedId];
 
-      IReinforcementController rc = IReinforcementController(controller.reinforcementController());
+      IReinforcementController rc = _getReinforcementController(controller);
       uint guildId = rc.busyGuildHelperOf(helperToken, helperId);
       if (guildId == 0) {
         emit IApplicationEvents.ReinforcementReleased(hero, heroId, helperToken, helperId);
@@ -276,6 +332,24 @@ library HeroLib {
       }
     }
   }
+
+  /// @notice Get all skills equipped by the hero
+  /// @return skills List of packed items: (itemAddress, itemId, slot)
+  function _getHeroSkills(IStatController statController, address hero, uint heroId) internal view returns (bytes32[] memory skills) {
+    bytes32[] memory dest = new bytes32[](3); // SKILL_1, SKILL_2, SKILL_3
+    uint len;
+    for (uint8 i; i < 3; ++i) {
+      bytes32 data = statController.heroItemSlot(hero, uint64(heroId), uint8(IStatController.ItemSlots.SKILL_1) + i);
+      if (data != bytes32(0)) {
+        (address item, uint itemId) = data.unpackNftId();
+        dest[len++] = PackingLib.packNftIdWithValue(item, itemId, uint8(IStatController.ItemSlots.SKILL_1) + i);
+      }
+    }
+    skills = new bytes32[](len);
+    for (uint i; i < len; ++i) {
+      skills[i] = dest[i];
+    }
+  }
   //endregion ------------------------ User actions: reinforcement
 
   //region ------------------------ Dungeon actions
@@ -283,32 +357,23 @@ library HeroLib {
   function kill(IController controller, address msgSender, address hero, uint heroId) internal returns (
     bytes32[] memory dropItems
   ) {
-    // restrictions are checked inside softKill
-    dropItems = softKill(controller, msgSender, hero, heroId, true, false);
+    onlyDungeonFactoryOrPvpController(controller, msgSender);
+    onlyRegisteredHero(hero);
+
+    IStatController statController = _getStatController(controller);
+    dropItems = _takeOffAll(_getItemController(controller), statController, hero, heroId, msgSender, true);
+
+    _resetLife(statController, hero, heroId, true, false);
 
     IHero(hero).burn(heroId);
 
     emit IApplicationEvents.Killed(hero, heroId, msgSender, dropItems, 0);
   }
 
-  /// @notice Take off all items from the hero, reduce life to 1
-  /// Optionally reduce mana to zero and/or decrease life chance
-  function softKill(IController controller, address msgSender, address hero, uint heroId, bool decLifeChances, bool resetMana) internal returns (
-    bytes32[] memory dropItems
-  ) {
-    onlyDungeonFactory(controller.dungeonFactory(), msgSender);
-    onlyRegisteredHero(hero);
-
-    IStatController statController = IStatController(controller.statController());
-    dropItems = _takeOffAll(IItemController(controller.itemController()), statController, hero, heroId, msgSender, true);
-
-    _resetLife(statController, hero, heroId, decLifeChances, resetMana);
-  }
-
   /// @notice Life => 1, mana => 0
   function resetLifeAndMana(IController controller, address msgSender, address hero, uint heroId) internal {
-    onlyDungeonFactory(controller.dungeonFactory(), msgSender);
-    _resetLife(IStatController(controller.statController()), hero, heroId, false, true);
+    onlyDungeonFactory(_getDungeonFactory(controller), msgSender);
+    _resetLife(_getStatController(controller), hero, heroId, false, true);
   }
   //endregion ------------------------ Dungeon actions
 
@@ -353,4 +418,25 @@ library HeroLib {
   }
   //endregion ------------------------ Kill internal
 
+  //region ------------------------ Utils to reduce size contract
+  function _getStatController(IController controller) internal view returns (IStatController) {
+    return IStatController(controller.statController());
+  }
+
+  function _getDungeonFactory(IController controller) internal view returns (IDungeonFactory) {
+    return IDungeonFactory(controller.dungeonFactory());
+  }
+
+  function _getReinforcementController(IController controller) internal view returns (IReinforcementController) {
+    return IReinforcementController(controller.reinforcementController());
+  }
+
+  function _getPvpController(IController controller) internal view returns (IPvpController) {
+    return IPvpController(controller.pvpController());
+  }
+
+  function _getItemController(IController controller) internal view returns (IItemController) {
+    return IItemController(controller.itemController());
+  }
+  //endregion ------------------------ Utils to reduce size contract
 }

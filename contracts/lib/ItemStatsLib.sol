@@ -30,14 +30,7 @@ library ItemStatsLib {
 
   //region ------------------------ CONSTANTS
 
-  uint private constant AUGMENT_CHANCE = 0.7e18;
-  /// @dev should be 20%
-  uint private constant AUGMENT_FACTOR = 5;
   uint private constant DURABILITY_REDUCTION = 3;
-  uint private constant MAX_AUGMENTATION_LEVEL = 20;
-
-  /// @dev keccak256(abi.encode(uint256(keccak256("item.controller.main")) - 1)) & ~bytes32(uint256(0xff))
-  bytes32 internal constant MAIN_STORAGE_LOCATION = 0xe78a2879cd91c3f7b62ea14e72546fed47c40919bca4daada532a5fa05ac6700;
 
   /// @notice SIP-003: Max value of item fragility that corresponds to 100%
   uint private constant MAX_FRAGILITY = 100_000;
@@ -50,216 +43,155 @@ library ItemStatsLib {
 
   //endregion ------------------------ CONSTANTS
 
-  //region ------------------------ STRUCTS
-
+  //region ------------------------ Data types
   struct EquipLocalContext {
-    IStatController statController;
-    IDungeonFactory dungeonFactory;
-    IHeroController hc;
-    address payToken;
+    bool inSandbox;
+    IHeroController.SandboxMode sandboxMode;
+    ItemLib.ItemWithId itemData;
+    IStatController.ItemSlots slot;
     address heroToken;
     /// @notice Lazy initialization of {equippedSlots}
     bool equippedSlotsLoaded;
     uint8[] equippedSlots;
     uint heroTokenId;
+    uint i;
   }
 
   struct ReduceDurabilityContext {
     /// @notice values 0 or 1 for SKILL_1, SKILL_2, SKILL_3
     uint8[] skillSlots;
     uint8[] busySlots;
-    IStatController statController;
-    address dungeonFactory;
     address itemAdr;
+    InputTakeOff inputTakeOff;
     uint16 durability;
     uint itemId;
   }
 
   struct TakeOffContext {
-    bool broken;
-    IController controller;
-
+    InputTakeOff inputTakeOff;
     address msgSender;
-    address heroToken;
+    address hero;
+
+    uint heroId;
+  }
+
+  struct InputTakeOff {
+    /// @notice True if the item is broken. The durability of the broken item will be set to 0.
+    bool broken;
+    IHeroController.SandboxMode sandboxMode;
     address destination;
-    IHeroController heroController;
-    IDungeonFactory dungeonFactory;
-    IStatController statController;
-
-    uint heroTokenId;
-  }
-  //endregion ------------------------ STRUCTS
-
-  //region ------------------------ STORAGE
-  function _S() internal pure returns (IItemController.MainState storage s) {
-    assembly {
-      s.slot := MAIN_STORAGE_LOCATION
-    }
-    return s;
-  }
-  //endregion ------------------------ STORAGE
-
-  //region ------------------------ Restrictions
-
-  function onlyDeployer(IController c, address sender) internal view {
-    if (!c.isDeployer(sender)) revert IAppErrors.ErrorNotDeployer(sender);
   }
 
-  function onlyOwner(address token, uint tokenId, address sender) internal view {
-    if (IERC721(token).ownerOf(tokenId) != sender) revert IAppErrors.ErrorNotOwner(token, tokenId);
-  }
-
-  function onlyEOA(bool isEoa) internal view {
-    if (!isEoa) {
-      revert IAppErrors.NotEOA(msg.sender);
-    }
-  }
-
-  function onlyStoryController(IController c, address sender) internal view {
-    if (sender != c.storyController()) revert IAppErrors.ErrorNotStoryController();
-  }
-
-  function onlyNotEquippedItem(address item, uint itemId) internal view {
-    if (isItemEquipped(_S(), item, itemId)) revert IAppErrors.ItemEquipped(item, itemId);
-  }
-
-  function onlyNotConsumable(IItemController.ItemMeta memory meta, address item) internal pure {
-    if (
-      uint(meta.itemType) == 0
-      || meta.itemMetaType == uint8(IItemController.ItemMetaType.CONSUMABLE) // todo probably first check is enough?
-    ) revert IAppErrors.Consumable(item);
-  }
-
-  function _checkPauseEoaOwner(
-    bool isEoa,
-    IController controller,
-    address msgSender,
-    address item,
-    uint itemId
-  ) internal view {
-    onlyEOA(isEoa);
-    if (controller.onPause()) revert IAppErrors.ErrorPaused();
-    onlyOwner(item, itemId, msgSender);
-  }
-
-  function _onlyRegisteredControllers(IController controller) internal view returns (address dungeonFactory) {
-    dungeonFactory = controller.dungeonFactory();
-    if (
-      msg.sender != dungeonFactory
-      && msg.sender != controller.reinforcementController()
-      // todo && msg.sender != controller.pvpController()
-    ) revert IAppErrors.ErrorForbidden(msg.sender);
-  }
-  //endregion ------------------------ Restrictions
+  //endregion ------------------------ Data types
 
   //region ------------------------ Views
   function itemByIndex(uint idx) internal view returns (address) {
-    return _S().items.at(idx);
+    return ItemLib._S().items.at(idx);
   }
 
   function itemsLength() internal view returns (uint) {
-    return _S().items.length();
+    return ItemLib._S().items.length();
   }
 
   function itemMeta(address item) internal view returns (IItemController.ItemMeta memory meta) {
-    return ItemLib.unpackedItemMeta(_S().itemMeta[item]);
+    return ItemLib.unpackedItemMeta(ItemLib._S().itemMeta[item]);
   }
 
   function augmentInfo(address item) internal view returns (address token, uint amount) {
-    return PackingLib.unpackAddressWithAmount(_S().augmentInfo[item]);
+    return PackingLib.unpackAddressWithAmount(ItemLib._S().augmentInfo[item]);
   }
 
   function genAttributeInfo(address item) internal view returns (IItemController.ItemGenerateInfo memory info) {
-    return ItemLib.unpackItemGenerateInfo(_S().generateInfoAttributes[item]);
+    return ItemLib.unpackItemGenerateInfo(ItemLib._S().generateInfoAttributes[item]);
   }
 
   function genCasterAttributeInfo(address item) internal view returns (IItemController.ItemGenerateInfo memory info) {
-    return ItemLib.unpackItemGenerateInfo(_S().generateInfoCasterAttributes[item]);
+    return ItemLib.unpackItemGenerateInfo(ItemLib._S().generateInfoCasterAttributes[item]);
   }
 
   function genTargetAttributeInfo(address item) internal view returns (IItemController.ItemGenerateInfo memory info) {
-    return ItemLib.unpackItemGenerateInfo(_S().generateInfoTargetAttributes[item]);
+    return ItemLib.unpackItemGenerateInfo(ItemLib._S().generateInfoTargetAttributes[item]);
   }
 
   function genAttackInfo(address item) internal view returns (IItemController.AttackInfo memory info) {
-    return ItemLib.unpackItemAttackInfo(_S().generateInfoAttack[item]);
+    return ItemLib.unpackItemAttackInfo(ItemLib._S().generateInfoAttack[item]);
   }
 
   function itemInfo(address item, uint itemId) internal view returns (IItemController.ItemInfo memory info) {
-    return ItemLib.unpackedItemInfo(_S().itemInfo[PackingLib.packNftId(item, itemId)]);
-  }
-
-  function equippedOn(address item, uint itemId) internal view returns (address hero, uint heroId) {
-    return PackingLib.unpackNftId(_S().equippedOn[item.packNftId(itemId)]);
+    return ItemLib.unpackedItemInfo(ItemLib._S().itemInfo[PackingLib.packNftId(item, itemId)]);
   }
 
   function itemAttributes(address item, uint itemId) internal view returns (int32[] memory values, uint8[] memory ids) {
-    return PackingLib.toInt32ArrayWithIds(_S()._itemAttributes[PackingLib.packNftId(item, itemId)]);
+    return PackingLib.toInt32ArrayWithIds(ItemLib._S()._itemAttributes[PackingLib.packNftId(item, itemId)]);
   }
 
   function consumableAttributes(address item) internal view returns (int32[] memory values, uint8[] memory ids) {
-    return PackingLib.toInt32ArrayWithIds(_S()._itemConsumableAttributes[item]);
+    return PackingLib.toInt32ArrayWithIds(ItemLib._S()._itemConsumableAttributes[item]);
   }
 
   function consumableStats(address item) internal view returns (IStatController.ChangeableStats memory stats) {
-    return StatLib.unpackChangeableStats(_S().itemConsumableStats[item]);
+    return StatLib.unpackChangeableStats(ItemLib._S().itemConsumableStats[item]);
   }
 
   function casterAttributes(address item, uint itemId) internal view returns (int32[] memory values, uint8[] memory ids) {
-    return PackingLib.toInt32ArrayWithIds(_S()._itemCasterAttributes[PackingLib.packNftId(item, itemId)]);
+    return PackingLib.toInt32ArrayWithIds(ItemLib._S()._itemCasterAttributes[PackingLib.packNftId(item, itemId)]);
   }
 
   function targetAttributes(address item, uint itemId) internal view returns (int32[] memory values, uint8[] memory ids) {
-    return PackingLib.toInt32ArrayWithIds(_S()._itemTargetAttributes[PackingLib.packNftId(item, itemId)]);
+    return PackingLib.toInt32ArrayWithIds(ItemLib._S()._itemTargetAttributes[PackingLib.packNftId(item, itemId)]);
   }
 
   function itemAttackInfo(address item, uint itemId) internal view returns (IItemController.AttackInfo memory info) {
-    return ItemLib.unpackItemAttackInfo(_S()._itemAttackInfo[PackingLib.packNftId(item, itemId)]);
+    return ItemLib.unpackItemAttackInfo(ItemLib._S()._itemAttackInfo[PackingLib.packNftId(item, itemId)]);
   }
 
   function score(address item, uint itemId) external view returns (uint) {
     return ScoreLib.itemScore(
-      StatLib.bytesToFullAttributesArray(_S()._itemAttributes[PackingLib.packNftId(item, itemId)]),
-      ItemLib.unpackedItemMeta(_S().itemMeta[item]).baseDurability
+      StatLib.bytesToFullAttributesArray(ItemLib._S()._itemAttributes[PackingLib.packNftId(item, itemId)]),
+      ItemLib.unpackedItemMeta(ItemLib._S().itemMeta[item]).baseDurability
     );
   }
 
   function isAllowedToTransfer(address item, uint itemId) internal view returns (bool) {
-    return _S().equippedOn[item.packNftId(itemId)] == bytes32(0);
+    return ItemLib._S().equippedOn[item.packNftId(itemId)] == bytes32(0);
   }
 
   function consumableActionMask(address item) internal view returns (uint) {
-    return _S()._consumableActionMask[item];
+    return ItemLib._S()._consumableActionMask[item];
   }
 
   /// @notice SIP-003: item fragility counter that displays the chance of an unsuccessful repair.
   /// @dev [0...100%], decimals 3, so the value is in the range [0...10_000]
   function itemFragility(address item, uint itemId) internal view returns (uint) {
-    return _S().itemFragility[item.packNftId(itemId)];
+    return ItemLib._S().itemFragility[item.packNftId(itemId)];
   }
 
   /// @notice SCB-1014: packed metadata for the item of type "Other"
   /// Use {PackingLib.unpackOtherXXX} routines to unpack data.
   /// The proper routine depends on subtype kind, use {PackingLib.getOtherItemTypeKind} to extract it.
   function packedItemMetaData(address item) internal view returns (bytes memory) {
-    return _S().packedItemMetaData[item];
+    return ItemLib._S().packedItemMetaData[item];
   }
 
   function itemControllerHelper() internal view returns (address) {
-    return address(uint160(_S().globalParam[IItemController.GlobalParam.ITEM_CONTROLLER_HELPER_ADDRESS_1]));
+    return address(uint160(ItemLib._S().globalParam[IItemController.GlobalParam.ITEM_CONTROLLER_HELPER_ADDRESS_1]));
   }
 
-  function isItemEquipped(IItemController.MainState storage s, address item, uint itemId) internal view returns (bool) {
-    return s.equippedOn[item.packNftId(itemId)] != bytes32(0);
+  function isItemEquipped(address item, uint itemId) internal view returns (bool) {
+    return ItemLib._S().equippedOn[item.packNftId(itemId)] != bytes32(0);
+  }
+
+  function tsFirstAugmentation(address item, uint itemId) internal view returns (uint) {
+    return ItemLib._S()._resetAugmentation[item.packNftId(itemId)].tsFirstAugmentation;
   }
   //endregion ------------------------ Views
 
   //region ------------------------ Deployer actions
   function setItemControllerHelper(IController controller, address helper_) internal {
-    onlyDeployer(controller, msg.sender);
+    ItemLib.onlyDeployer(controller, msg.sender);
     if (itemControllerHelper() != address(0)) revert IAppErrors.AlreadyInitialized();
 
-    _S().globalParam[IItemController.GlobalParam.ITEM_CONTROLLER_HELPER_ADDRESS_1] = uint(uint160(helper_));
+    ItemLib._S().globalParam[IItemController.GlobalParam.ITEM_CONTROLLER_HELPER_ADDRESS_1] = uint(uint160(helper_));
     emit IApplicationEvents.ItemControllerHelper(helper_);
   }
 
@@ -270,31 +202,31 @@ library ItemStatsLib {
     IController controller,
     address sender,
     address item,
-    address recipient
+    address recipient,
+    uint32 magicFind
   ) internal returns (uint itemId) {
-    return ItemLib.mintNewItem(_S(), controller, sender, item, recipient);
+    return ItemLib.mintNewItem(controller, sender, item, recipient, magicFind);
   }
 
   /// @notice Reduce durability of all equipped items except not-used items of SKILL-type.
   /// Used skills are stored in skillSlotsForDurabilityReduction
   function reduceEquippedItemsDurability(
-    IController controller,
+    ControllerContextLib.ControllerContext memory cc,
     address hero,
     uint heroId,
     uint8 biome,
     bool reduceDurabilityAllSkills
   ) external {
     ReduceDurabilityContext memory ctx;
-    ctx.dungeonFactory = _onlyRegisteredControllers(controller);
 
-    IItemController.MainState storage s = _S();
+    ItemLib.onlyRegisteredControllers(cc);
 
     if (!reduceDurabilityAllSkills) {
       // reduce durability of skill-slots only if they are marked for slot-durability-reduction
-      ctx.skillSlots = IDungeonFactory(ctx.dungeonFactory).skillSlotsForDurabilityReduction(hero, heroId);
+      ctx.skillSlots = ControllerContextLib.dungeonFactory(cc).skillSlotsForDurabilityReduction(hero, heroId);
     }
-    ctx.statController = IStatController(controller.statController());
-    ctx.busySlots = ctx.statController.heroItemSlots(hero, heroId);
+    ctx.busySlots = ControllerContextLib.statController(cc).heroItemSlots(hero, heroId);
+    ctx.inputTakeOff = InputTakeOff(false, _getSandboxMode(cc, hero, heroId), IERC721(hero).ownerOf(heroId));
 
     for (uint i; i < ctx.busySlots.length; ++i) {
       if (!reduceDurabilityAllSkills) {
@@ -307,44 +239,19 @@ library ItemStatsLib {
         }
       }
 
-      (ctx.itemAdr, ctx.itemId) = ctx.statController.heroItemSlot(hero, uint64(heroId), ctx.busySlots[i]).unpackNftId();
-      ctx.durability = _reduceDurabilityForItem(s, ctx.itemAdr, ctx.itemId, biome);
+      (ctx.itemAdr, ctx.itemId) = ControllerContextLib.statController(cc).heroItemSlot(hero, uint64(heroId), ctx.busySlots[i]).unpackNftId();
+      ctx.durability = _reduceDurabilityForItem(ItemLib._S(), ctx.itemAdr, ctx.itemId, biome);
 
       // if broken need to take off
       if (ctx.durability == 0) {
-        _takeOff(
-          s,
-          ctx.statController,
-          ctx.itemAdr,
-          ctx.itemId,
-          hero,
-          heroId,
-          ctx.busySlots[i],
-          IERC721(hero).ownerOf(heroId),
-          false
-        );
+        _takeOff(ItemLib._S(), cc, ctx.itemAdr, ctx.itemId, hero, heroId, ctx.busySlots[i], ctx.inputTakeOff);
       }
-
     }
-  }
-
-  function destroy(IController controller, address msgSender, address item, uint itemId) external {
-    if (
-      controller.gameObjectController() != msgSender
-      && controller.storyController() != msgSender
-      && IERC721(item).ownerOf(itemId) != msgSender
-    ) {
-      revert IAppErrors.ErrorForbidden(msgSender);
-    }
-
-    onlyNotEquippedItem(item, itemId);
-
-    _destroy(item, itemId);
   }
 
   /// @dev Some stories can manipulate items
   function takeOffDirectly(
-    IController controller,
+    ControllerContextLib.ControllerContext memory cc,
     address item,
     uint itemId,
     address hero,
@@ -353,230 +260,155 @@ library ItemStatsLib {
     address destination,
     bool broken
   ) external {
-    if (controller.storyController() != msg.sender && controller.heroController() != msg.sender) {
+    if (address(ControllerContextLib.storyController(cc)) != msg.sender && address(ControllerContextLib.heroController(cc)) != msg.sender) {
       revert IAppErrors.ErrorForbidden(msg.sender);
     }
-    ItemStatsLib._takeOff(_S(), IStatController(controller.statController()), item, itemId, hero, heroId, itemSlot, destination, broken);
+    IHeroController.SandboxMode sandboxMode = _getSandboxMode(cc, hero, heroId);
+    ItemStatsLib._takeOff(ItemLib._S(), cc, item, itemId, hero, heroId, itemSlot, InputTakeOff(broken, sandboxMode, destination));
   }
 
   /// @notice SIP-003: The quest mechanic that previously burned the item will increase its fragility by 1%
   function incBrokenItemFragility(IController controller, address item, uint itemId) internal {
-    onlyStoryController(controller, msg.sender);
+    ItemLib.onlyStoryController(controller);
     _addItemFragility(item, itemId, FRAGILITY_BREAK_ITEM_PORTION);
   }
   //endregion ------------------------ Controllers actions
 
   //region ------------------------ Eoa actions
   function equipMany(
-    bool isEoa,
-    IController controller,
-    address msgSender,
-    address heroToken,
-    uint heroTokenId,
+    ItemLib.SenderInfo memory senderInfo,
+    ControllerContextLib.ControllerContext memory cc,
+    address hero,
+    uint heroId,
     address[] calldata items,
     uint[] calldata itemIds,
     uint8[] calldata itemSlots
   ) external {
     EquipLocalContext memory ctx;
-    ctx.hc = IHeroController(controller.heroController());
 
     // only HeroController or EOA
-    if (address(ctx.hc) != msgSender) {
-      onlyEOA(isEoa);
+    if (address(ControllerContextLib.heroController(cc)) != senderInfo.msgSender) {
+      ItemLib.onlyEOA(senderInfo.isEoa);
     }
 
-    IItemController.MainState storage s = _S();
     if (items.length != itemIds.length || items.length != itemSlots.length) revert IAppErrors.LengthsMismatch();
 
-    ctx.statController = IStatController(controller.statController());
-    ctx.dungeonFactory = IDungeonFactory(controller.dungeonFactory());
-    (ctx.payToken,) = ctx.hc.payTokenInfo(heroToken);
-    ctx.heroTokenId = heroTokenId;
-    ctx.heroToken = heroToken;
+    ctx.heroTokenId = heroId;
+    ctx.heroToken = hero;
+    ctx.sandboxMode = _getSandboxMode(cc, hero, heroId);
 
-    if (address(ctx.hc) != msgSender) {
-      onlyOwner(heroToken, heroTokenId, msgSender);
+    if (address(ControllerContextLib.heroController(cc)) != senderInfo.msgSender) {
+      ItemLib.onlyOwner(hero, heroId, senderInfo.msgSender);
     }
-    _checkHeroAndController(controller, ctx.hc, heroToken, heroTokenId);
-    if (ctx.dungeonFactory.currentDungeon(heroToken, heroTokenId) != 0) revert IAppErrors.EquipForbiddenInDungeon();
+    _checkHeroAndController(cc, hero, heroId);
+    ItemLib.onlyAliveHero(cc, hero, heroId);
+    if (ControllerContextLib.dungeonFactory(cc).currentDungeon(hero, heroId) != 0) revert IAppErrors.EquipForbiddenInDungeon();
 
-    if (ctx.payToken == address(0)) revert IAppErrors.ErrorEquipForbidden();
-
-    for (uint i; i < items.length; ++i) {
+    for (ctx.i = 0; ctx.i < items.length; ++ctx.i) {
       // SCB-1021: some slots require uniqueness of item tokens
-      IStatController.ItemSlots slot = IStatController.ItemSlots(itemSlots[i]);
-      if (slot == IStatController.ItemSlots.RIGHT_RING) {
-        _checkItemIsUnique(ctx, items, i, [IStatController.ItemSlots.LEFT_RING, IStatController.ItemSlots.UNKNOWN]);
-      } else if (slot == IStatController.ItemSlots.LEFT_RING) {
-        _checkItemIsUnique(ctx, items, i, [IStatController.ItemSlots.RIGHT_RING, IStatController.ItemSlots.UNKNOWN]);
-      } else if (slot == IStatController.ItemSlots.SKILL_1) {
-        _checkItemIsUnique(ctx, items, i, [IStatController.ItemSlots.SKILL_2, IStatController.ItemSlots.SKILL_3]);
-      } else if (slot == IStatController.ItemSlots.SKILL_2) {
-        _checkItemIsUnique(ctx, items, i, [IStatController.ItemSlots.SKILL_1, IStatController.ItemSlots.SKILL_3]);
-      } else if (slot == IStatController.ItemSlots.SKILL_3) {
-        _checkItemIsUnique(ctx, items, i, [IStatController.ItemSlots.SKILL_1, IStatController.ItemSlots.SKILL_2]);
+      ctx.slot = IStatController.ItemSlots(itemSlots[ctx.i]);
+      if (ctx.slot == IStatController.ItemSlots.RIGHT_RING) {
+        _checkItemIsUnique(ctx, cc, items, ctx.i, [IStatController.ItemSlots.LEFT_RING, IStatController.ItemSlots.UNKNOWN]);
+      } else if (ctx.slot == IStatController.ItemSlots.LEFT_RING) {
+        _checkItemIsUnique(ctx, cc, items, ctx.i, [IStatController.ItemSlots.RIGHT_RING, IStatController.ItemSlots.UNKNOWN]);
+      } else if (ctx.slot == IStatController.ItemSlots.SKILL_1) {
+        _checkItemIsUnique(ctx, cc, items, ctx.i, [IStatController.ItemSlots.SKILL_2, IStatController.ItemSlots.SKILL_3]);
+      } else if (ctx.slot == IStatController.ItemSlots.SKILL_2) {
+        _checkItemIsUnique(ctx, cc, items, ctx.i, [IStatController.ItemSlots.SKILL_1, IStatController.ItemSlots.SKILL_3]);
+      } else if (ctx.slot == IStatController.ItemSlots.SKILL_3) {
+        _checkItemIsUnique(ctx, cc, items, ctx.i, [IStatController.ItemSlots.SKILL_1, IStatController.ItemSlots.SKILL_2]);
       }
 
-      if (address(ctx.hc) != msgSender) {
-        onlyOwner(items[i], itemIds[i], msgSender);
-        _equip(s, ctx, msgSender, items[i], itemIds[i], itemSlots[i]);
+      ctx.itemData = ItemLib.ItemWithId({item: items[ctx.i], itemId: itemIds[ctx.i]});
+      if (address(ControllerContextLib.heroController(cc)) == senderInfo.msgSender) {
+        // Hero is created in tiers 2 or 3, tier items are minted and equipped (sandbox mode is not allowed for tiers 2 and 3)
+        _equip(ItemLib._S(), ctx, cc, IERC721(items[ctx.i]).ownerOf(itemIds[ctx.i]), ctx.itemData, itemSlots[ctx.i], false);
       } else {
-        _equip(s, ctx, IERC721(items[i]).ownerOf(itemIds[i]), items[i], itemIds[i], itemSlots[i]);
+        ctx.inSandbox = ItemLib.onlyItemOwner(cc, ctx.itemData, hero, heroId, senderInfo.msgSender, ctx.sandboxMode, [false, false]);
+        _equip(ItemLib._S(), ctx, cc, senderInfo.msgSender, ctx.itemData, itemSlots[ctx.i], ctx.inSandbox);
       }
     }
   }
 
   function takeOffMany(
-    bool isEoa,
-    IController controller,
-    address msgSender,
-    address heroToken,
-    uint heroTokenId,
+    ItemLib.SenderInfo memory senderInfo,
+    ControllerContextLib.ControllerContext memory cc,
+    address hero,
+    uint heroId,
     address[] calldata items,
     uint[] calldata tokenIds,
     uint8[] calldata itemSlots
   ) external {
-    onlyEOA(isEoa);
+    ItemLib.onlyEOA(senderInfo.isEoa);
 
     TakeOffContext memory ctx = ItemStatsLib.TakeOffContext({
-      controller: controller,
-      msgSender: msgSender,
-      heroToken: heroToken,
-      heroTokenId: heroTokenId,
-      destination: msgSender,
-      broken: false,
-      heroController: IHeroController(controller.heroController()),
-      dungeonFactory: IDungeonFactory(controller.dungeonFactory()),
-      statController: IStatController(controller.statController())
+      msgSender: senderInfo.msgSender,
+      hero: hero,
+      heroId: heroId,
+      inputTakeOff: InputTakeOff({
+        destination: senderInfo.msgSender,
+        broken: false,
+        sandboxMode: _getSandboxMode(cc, hero, heroId)
+      })
     });
 
-    IItemController.MainState storage s = _S();
+    IItemController.MainState storage s = ItemLib._S();
     uint len = items.length;
     if (len != tokenIds.length || len != itemSlots.length) revert IAppErrors.LengthsMismatch();
 
     for (uint i; i < len; ++i) {
-      _takeOffWithChecks(s, ctx, items[i], tokenIds[i], itemSlots[i]);
+      _takeOffWithChecks(s, ctx, cc, items[i], tokenIds[i], itemSlots[i]);
     }
   }
 
   /// @notice Destroy {consumed item} to repair durability of the {item}
   /// There is a chance ~ item fragility that the item won't be repaired.
   function repairDurability(
-    bool isEoa,
-    IController controller,
-    address msgSender,
+    ItemLib.SenderInfo memory senderInfo,
+    ControllerContextLib.ControllerContext memory cc,
     address item,
     uint itemId,
     uint consumedItemId
   ) external {
-    _repairDurability(isEoa, controller, msgSender, item, itemId, consumedItemId, CalcLib.pseudoRandom);
-  }
-
-  /// @notice Destroy {consumed item} to augment given {item}.
-  /// There is a chance of 30% that the item will be destroyed instead of augmentation.
-  function augment(
-    bool isEoa,
-    IController controller,
-    address msgSender,
-    address item,
-    uint itemId,
-    uint consumedItemId
-  ) external {
-    // restrictions are checked inside {_prepareToAugment}
-    IItemController.MainState storage s = _S();
-    (
-      IItemController.ItemMeta memory meta,
-      IItemController.ItemInfo memory _itemInfo
-    ) = _prepareToAugment(isEoa, controller, msgSender, item, itemId, consumedItemId);
-
-    onlyNotConsumable(meta, item);
-    if (_itemInfo.augmentationLevel >= MAX_AUGMENTATION_LEVEL) revert IAppErrors.TooHighAgLevel(_itemInfo.augmentationLevel);
-
-    _destroy(item, consumedItemId);
-
-    address augToken = _sendFee(s, controller, item, msgSender);
-    // we check augToken for 0 AFTER sendFee to avoid second reading of augmentInfo
-    if (augToken == address(0)) revert IAppErrors.ZeroAugmentation();
-
-    if (IOracle(controller.oracle()).getRandomNumber(1e18, 0) < AUGMENT_CHANCE) {
-      IItemController.AugmentInfo memory _augmentInfo;
-      bytes32 packedItemId = item.packNftId(itemId);
-
-      // augment base
-      (_augmentInfo.attributesValues, _augmentInfo.attributesIds) = _augmentAttributes(s._itemAttributes[packedItemId], true);
-      s._itemAttributes[packedItemId] = _augmentInfo.attributesValues.toBytes32ArrayWithIds(_augmentInfo.attributesIds);
-
-      // additionally
-      if (meta.itemMetaType == uint8(IItemController.ItemMetaType.ATTACK)) {
-        _augmentInfo.attackInfo = ItemLib.unpackItemAttackInfo(s._itemAttackInfo[packedItemId]);
-        _augmentInfo.attackInfo.min = _augmentAttribute(_augmentInfo.attackInfo.min);
-        _augmentInfo.attackInfo.max = _augmentAttribute(_augmentInfo.attackInfo.max);
-        s._itemAttackInfo[packedItemId] = ItemLib.packItemAttackInfo(_augmentInfo.attackInfo);
-      } else if (meta.itemMetaType == uint8(IItemController.ItemMetaType.BUFF)) {
-        // caster
-        (_augmentInfo.casterValues, _augmentInfo.casterIds) = _augmentAttributes(s._itemCasterAttributes[packedItemId], true);
-        s._itemCasterAttributes[packedItemId] = _augmentInfo.casterValues.toBytes32ArrayWithIds(_augmentInfo.casterIds);
-
-        // target
-        (_augmentInfo.targetValues, _augmentInfo.targetIds) = _augmentAttributes(s._itemTargetAttributes[packedItemId], false);
-        s._itemTargetAttributes[packedItemId] = _augmentInfo.targetValues.toBytes32ArrayWithIds(_augmentInfo.targetIds);
-      }
-
-      // increase aug level
-      _itemInfo.augmentationLevel = _itemInfo.augmentationLevel + 1;
-      s.itemInfo[packedItemId] = ItemLib.packItemInfo(_itemInfo);
-
-      emit IApplicationEvents.Augmented(item, itemId, consumedItemId, _itemInfo.augmentationLevel, _augmentInfo);
-    } else {
-      _destroy(item, itemId);
-      emit IApplicationEvents.NotAugmented(item, itemId, consumedItemId, _itemInfo.augmentationLevel);
-    }
+    _repairDurability(senderInfo, cc, item, itemId, consumedItemId, CalcLib.pseudoRandom);
   }
 
   /// @notice Use consumable
   function use(
-    bool isEoa,
-    IController controller,
-    IStatController statController,
-    address msgSender,
-    address item,
-    uint itemId,
-    address heroToken,
-    uint heroTokenId
+    ItemLib.SenderInfo memory senderInfo,
+    ControllerContextLib.ControllerContext memory cc,
+    ItemLib.ItemWithId memory itemData,
+    address hero,
+    uint heroId
   ) external returns (uint actionMask) {
-    onlyEOA(isEoa);
-    onlyOwner(item, itemId, msgSender);
+    ItemLib.onlyEOA(senderInfo.isEoa);
+    bool inSandbox = ItemLib.onlyItemOwner(cc, itemData, hero, heroId, senderInfo.msgSender, _getSandboxMode(cc, hero, heroId), [true, false]);
 
-    IItemController.MainState storage s = _S();
+    IItemController.MainState storage s = ItemLib._S();
 
-    IHeroController hc = IHeroController(controller.heroController());
-
-    (address payToken,) = hc.payTokenInfo(heroToken);
-    if (payToken == address(0)) revert IAppErrors.UseForbiddenZeroPayToken();
-
-    onlyOwner(heroToken, heroTokenId, msgSender);
-    _checkHeroAndController(controller, hc, heroToken, heroTokenId);
+    ItemLib.onlyOwner(hero, heroId, senderInfo.msgSender);
+    _checkHeroAndController(cc, hero, heroId);
 
     {
-      IItemController.ItemMeta memory meta = ItemLib.unpackedItemMeta(s.itemMeta[item]);
-      if (uint8(meta.itemType) != 0) revert IAppErrors.NotConsumable(item);
-      _checkRequirements(statController, heroToken, heroTokenId, meta.requirements);
+      IItemController.ItemMeta memory meta = ItemLib.unpackedItemMeta(s.itemMeta[itemData.item]);
+      if (uint8(meta.itemType) != 0) revert IAppErrors.NotConsumable(itemData.item);
+      ItemLib.checkRequirements(cc, hero, heroId, meta.requirements);
 
-      IStatController.ChangeableStats memory change = StatLib.unpackChangeableStats(s.itemConsumableStats[item]);
+      IStatController.ChangeableStats memory change = StatLib.unpackChangeableStats(s.itemConsumableStats[itemData.item]);
       // allow to use multiple times items with experience/lc
       if(change.experience == 0 && change.lifeChances == 0) {
-        statController.registerConsumableUsage(heroToken, heroTokenId, item);
+        ControllerContextLib.statController(cc).registerConsumableUsage(hero, heroId, itemData.item);
       }
-      statController.changeCurrentStats(heroToken, heroTokenId, change, true);
+      ControllerContextLib.statController(cc).changeCurrentStats(hero, heroId, change, true);
     }
 
     {
-      bytes32[] memory itemConsumableAttributes = s._itemConsumableAttributes[item];
+      bytes32[] memory itemConsumableAttributes = s._itemConsumableAttributes[itemData.item];
       if (itemConsumableAttributes.length != 0) {
         int32[] memory attributes = StatLib.bytesToFullAttributesArray(itemConsumableAttributes);
-        statController.changeBonusAttributes(IStatController.ChangeAttributesInfo({
-          heroToken: heroToken,
-          heroTokenId: heroTokenId,
+        ControllerContextLib.statController(cc).changeBonusAttributes(IStatController.ChangeAttributesInfo({
+          heroToken: hero,
+          heroTokenId: heroId,
           changeAttributes: attributes,
           add: true,
           temporally: true
@@ -584,27 +416,26 @@ library ItemStatsLib {
       }
     }
 
-    actionMask = s._consumableActionMask[item];
+    actionMask = s._consumableActionMask[itemData.item];
 
-    _destroy(item, itemId);
-    emit IApplicationEvents.Used(item, itemId, heroToken, heroTokenId);
+    ItemLib._destroy(cc, itemData.item, itemData.itemId, inSandbox);
+    emit IApplicationEvents.Used(itemData.item, itemData.itemId, hero, heroId);
   }
 
   function combineItems(
-    bool isEoa,
-    IController controller,
-    address msgSender,
+    ItemLib.SenderInfo memory senderInfo,
+    ControllerContextLib.ControllerContext memory cc,
     uint configId,
     address[] memory items,
     uint[][] memory itemIds
   ) internal returns (uint itemId) {
-    onlyEOA(isEoa);
+    ItemLib.onlyEOA(senderInfo.isEoa);
 
     address helper = ItemStatsLib.itemControllerHelper();
     if (helper == address(0)) revert IAppErrors.NotInitialized();
 
     // validate that {items} and {itemIds} fit to the selected config
-    address itemToMint = IItemControllerHelper(helper).prepareToCombine(msgSender, configId, items, itemIds);
+    address itemToMint = IItemControllerHelper(helper).prepareToCombine(senderInfo.msgSender, configId, items, itemIds);
 
     // destroy provided items
     uint lenItems = items.length;
@@ -612,14 +443,14 @@ library ItemStatsLib {
       uint[] memory ids = itemIds[i];
       uint len = ids.length;
       for (uint j; j < len; ++j) {
-        _destroy(items[i], ids[j]);
+        ItemLib._destroy(cc, items[i], ids[j], false);
       }
     }
 
     // mint a new item in exchange of destroyed items
-    itemId = ItemLib.mintNewItem(_S(), controller, address(this), itemToMint, msgSender);
+    itemId = ItemLib.mintNewItem(cc.controller, address(this), itemToMint, senderInfo.msgSender, 0);
 
-    emit IApplicationEvents.CombineItems(msgSender, configId, items, itemIds, itemToMint, itemId);
+    emit IApplicationEvents.CombineItems(senderInfo.msgSender, configId, items, itemIds, itemToMint, itemId);
   }
 
   //endregion ------------------------ Eoa actions
@@ -629,12 +460,13 @@ library ItemStatsLib {
   /// @notice Ensure that 1) {items} has no duplicates of items[index] 2) items[index] is not equipped at {slotsToCheck}
   function _checkItemIsUnique(
     EquipLocalContext memory ctx,
+    ControllerContextLib.ControllerContext memory cc,
     address[] memory items,
     uint index,
     IStatController.ItemSlots[2] memory slotsToCheck
   ) internal view {
     if (!ctx.equippedSlotsLoaded) {
-      ctx.equippedSlots = ctx.statController.heroItemSlots(ctx.heroToken, ctx.heroTokenId);
+      ctx.equippedSlots = ControllerContextLib.statController(cc).heroItemSlots(ctx.heroToken, ctx.heroTokenId);
       ctx.equippedSlotsLoaded = true;
     }
 
@@ -650,144 +482,124 @@ library ItemStatsLib {
     len = ctx.equippedSlots.length;
     for (uint i; i < len; ++i) {
       if (uint8(slotsToCheck[0]) == ctx.equippedSlots[i] || uint8(slotsToCheck[1]) == ctx.equippedSlots[i]) {
-        (address item,) = PackingLib.unpackNftId(ctx.statController.heroItemSlot(ctx.heroToken, uint64(ctx.heroTokenId), ctx.equippedSlots[i]));
+        (address item,) = PackingLib.unpackNftId(ControllerContextLib.statController(cc).heroItemSlot(ctx.heroToken, uint64(ctx.heroTokenId), ctx.equippedSlots[i]));
         if (item == items[index]) revert IAppErrors.ItemAlreadyUsedInSlot(item, uint8(ctx.equippedSlots[i]));
       }
     }
   }
 
   /// @notice Equip the item, add bonus attributes, transfer the item from the sender to the hero token
+  /// @param inSandbox Take the item from the sandbox
   function _equip(
     IItemController.MainState storage s,
-    EquipLocalContext memory c,
+    EquipLocalContext memory ctx,
+    ControllerContextLib.ControllerContext memory cc,
     address msgSender,
-    address item,
-    uint itemId,
-    uint8 itemSlot
+    ItemLib.ItemWithId memory itemData,
+    uint8 itemSlot,
+    bool inSandbox
   ) internal {
-    IItemController.ItemMeta memory meta = ItemLib.unpackedItemMeta(s.itemMeta[item]);
-    IItemController.ItemInfo memory _itemInfo = ItemLib.unpackedItemInfo(s.itemInfo[item.packNftId(itemId)]);
+    IItemController.ItemMeta memory meta = ItemLib.unpackedItemMeta(s.itemMeta[itemData.item]);
+    IItemController.ItemInfo memory _itemInfo = ItemLib.unpackedItemInfo(s.itemInfo[itemData.item.packNftId(itemData.itemId)]);
 
-    if (meta.itemMetaType == 0) revert IAppErrors.UnknownItem(item);
-    onlyNotEquippedItem(item, itemId);
-    onlyNotConsumable(meta, item);
+    if (meta.itemMetaType == 0) revert IAppErrors.UnknownItem(itemData.item);
+    ItemLib.onlyNotEquippedItem(itemData.item, itemData.itemId);
+    ItemLib.onlyNotConsumable(meta, itemData.item);
 
-    if (meta.baseDurability != 0 && _itemInfo.durability == 0) revert IAppErrors.Broken(item);
-    _checkRequirements(c.statController, c.heroToken, c.heroTokenId, meta.requirements);
+    if (meta.baseDurability != 0 && _itemInfo.durability == 0) revert IAppErrors.Broken(itemData.item);
+    ItemLib.checkRequirements(cc, ctx.heroToken, ctx.heroTokenId, meta.requirements);
 
-    c.statController.changeHeroItemSlot(
-      c.heroToken,
-      uint64(c.heroTokenId),
+    ControllerContextLib.statController(cc).changeHeroItemSlot(
+      ctx.heroToken,
+      uint64(ctx.heroTokenId),
       uint(meta.itemType),
       itemSlot,
-      item,
-      itemId,
+      itemData.item,
+      itemData.itemId,
       true
     );
 
-    bytes32[] memory attributes = s._itemAttributes[item.packNftId(itemId)];
+    bytes32[] memory attributes = s._itemAttributes[itemData.item.packNftId(itemData.itemId)];
     if (attributes.length != 0) {
-      c.statController.changeBonusAttributes(IStatController.ChangeAttributesInfo({
-        heroToken: c.heroToken,
-        heroTokenId: c.heroTokenId,
+      ControllerContextLib.statController(cc).changeBonusAttributes(IStatController.ChangeAttributesInfo({
+        heroToken: ctx.heroToken,
+        heroTokenId: ctx.heroTokenId,
         changeAttributes: StatLib.bytesToFullAttributesArray(attributes),
         add: true,
         temporally: false
       }));
 
       // some items can reduce hero life to zero, prevent this
-      if (c.statController.heroStats(c.heroToken, c.heroTokenId).life == 0) revert IAppErrors.ZeroLife();
+      if (ControllerContextLib.statController(cc).heroStats(ctx.heroToken, ctx.heroTokenId).life == 0) revert IAppErrors.ZeroLife();
     }
 
     // transfer item to hero
-    IItem(item).controlledTransfer(msgSender, c.heroToken, itemId);
+    if (inSandbox) {
+      ControllerContextLib.itemBoxController(cc).transferToHero(ctx.heroToken, ctx.heroTokenId, itemData.item, itemData.itemId);
+    } else {
+      IItem(itemData.item).controlledTransfer(msgSender, ctx.heroToken, itemData.itemId);
+    }
     // need to equip after transfer for properly checks
-    s.equippedOn[item.packNftId(itemId)] = c.heroToken.packNftId(c.heroTokenId);
+    s.equippedOn[itemData.item.packNftId(itemData.itemId)] = ctx.heroToken.packNftId(ctx.heroTokenId);
 
-    emit IApplicationEvents.Equipped(item, itemId, c.heroToken, c.heroTokenId, itemSlot);
-  }
-
-  function _checkRequirements(
-    IStatController statController,
-    address heroToken,
-    uint heroTokenId,
-    IStatController.CoreAttributes memory requirements
-  ) internal view {
-    IStatController.CoreAttributes memory attributes = statController.heroBaseAttributes(heroToken, heroTokenId);
-    if (
-      requirements.strength > attributes.strength
-      || requirements.dexterity > attributes.dexterity
-      || requirements.vitality > attributes.vitality
-      || requirements.energy > attributes.energy
-    ) revert IAppErrors.RequirementsToItemAttributes();
+    emit IApplicationEvents.Equipped(itemData.item, itemData.itemId, ctx.heroToken, ctx.heroTokenId, itemSlot);
   }
 
   /// @notice Check requirements for the hero and for the controller state before equip/take off/use items
-  function _checkHeroAndController(IController controller, IHeroController heroController, address heroToken, uint heroTokenId) internal view {
-    if (IReinforcementController(controller.reinforcementController()).isStaked(heroToken, heroTokenId)) revert IAppErrors.Staked(heroToken, heroTokenId);
-    if (controller.onPause()) revert IAppErrors.ErrorPaused();
-    if (heroController.heroClass(heroToken) == 0) revert IAppErrors.ErrorHeroIsNotRegistered(heroToken);
+  function _checkHeroAndController(ControllerContextLib.ControllerContext memory cc, address heroToken, uint heroTokenId) internal view {
+    if (IReinforcementController(ControllerContextLib.reinforcementController(cc)).isStaked(heroToken, heroTokenId)) revert IAppErrors.Staked(heroToken, heroTokenId);
+    if (cc.controller.onPause()) revert IAppErrors.ErrorPaused();
+    if (ControllerContextLib.heroController(cc).heroClass(heroToken) == 0) revert IAppErrors.ErrorHeroIsNotRegistered(heroToken);
+    IPvpController pc = ControllerContextLib.pvpController(cc);
+    if (address(pc) != address(0) && pc.isHeroStakedCurrently(heroToken, heroTokenId)) revert IAppErrors.PvpStaked();
   }
 
   function _takeOffWithChecks(
     IItemController.MainState storage s,
     TakeOffContext memory ctx,
+    ControllerContextLib.ControllerContext memory cc,
     address item,
     uint itemId,
     uint8 itemSlot
   ) internal {
-    onlyOwner(ctx.heroToken, ctx.heroTokenId, ctx.msgSender);
-    _checkHeroAndController(ctx.controller,
-      ctx.heroController,
-      ctx.heroToken,
-      ctx.heroTokenId
-    );
-    if (ctx.dungeonFactory.currentDungeon(ctx.heroToken, ctx.heroTokenId) != 0) revert IAppErrors.TakeOffForbiddenInDungeon();
+    ItemLib.onlyOwner(ctx.hero, ctx.heroId, ctx.msgSender);
+    _checkHeroAndController(cc, ctx.hero, ctx.heroId);
+    if (ControllerContextLib.dungeonFactory(cc).currentDungeon(ctx.hero, ctx.heroId) != 0) revert IAppErrors.TakeOffForbiddenInDungeon();
 
-    if (s.equippedOn[item.packNftId(itemId)] != ctx.heroToken.packNftId(ctx.heroTokenId)) revert IAppErrors.NotEquipped(item);
+    if (s.equippedOn[item.packNftId(itemId)] != ctx.hero.packNftId(ctx.heroId)) revert IAppErrors.NotEquipped(item);
 
-    _takeOff(s, ctx.statController, item, itemId, ctx.heroToken, ctx.heroTokenId, itemSlot, ctx.destination, ctx.broken);
+    _takeOff(s, cc, item, itemId, ctx.hero, ctx.heroId, itemSlot, ctx.inputTakeOff);
   }
 
   /// @notice Take off the item, remove bonus attributes, transfer the item from the hero token to {destination}
-  /// @param broken True if the item is broken. The durability of the broken item will be set to 0.
   function _takeOff(
     IItemController.MainState storage s,
-    IStatController statController,
+    ControllerContextLib.ControllerContext memory cc,
     address item,
     uint itemId,
-    address heroToken,
-    uint heroTokenId,
+    address hero,
+    uint heroId,
     uint8 itemSlot,
-    address destination,
-    bool broken
+    InputTakeOff memory inputTakeOff
   ) internal {
     bytes32 packedItemId = item.packNftId(itemId);
     IItemController.ItemMeta memory meta = ItemLib.unpackedItemMeta(s.itemMeta[item]);
     IItemController.ItemInfo memory _itemInfo = ItemLib.unpackedItemInfo(s.itemInfo[packedItemId]);
 
-    onlyNotConsumable(meta, item);
+    ItemLib.onlyNotConsumable(meta, item);
 
-    statController.changeHeroItemSlot(
-      heroToken,
-      uint64(heroTokenId),
-      uint(meta.itemType),
-      itemSlot,
-      item,
-      itemId,
-      false
-    );
+    ControllerContextLib.statController(cc).changeHeroItemSlot(hero, uint64(heroId), uint(meta.itemType), itemSlot, item, itemId, false);
 
-    if (broken) {
+    if (inputTakeOff.broken) {
       _itemInfo.durability = 0;
       s.itemInfo[packedItemId] = ItemLib.packItemInfo(_itemInfo);
     }
 
     bytes32[] memory attributes = s._itemAttributes[packedItemId];
     if (attributes.length != 0) {
-      statController.changeBonusAttributes(IStatController.ChangeAttributesInfo({
-        heroToken: heroToken,
-        heroTokenId: heroTokenId,
+      ControllerContextLib.statController(cc).changeBonusAttributes(IStatController.ChangeAttributesInfo({
+        heroToken: hero,
+        heroTokenId: heroId,
         changeAttributes: StatLib.bytesToFullAttributesArray(attributes),
         add: false,
         temporally: false
@@ -796,61 +608,42 @@ library ItemStatsLib {
 
     // need to take off before transfer for properly checks
     s.equippedOn[packedItemId] = bytes32(0);
-    IItem(item).controlledTransfer(heroToken, destination, itemId);
+    if (inputTakeOff.sandboxMode == IHeroController.SandboxMode.SANDBOX_MODE_1) {
+      IItem(item).controlledTransfer(hero, address(ControllerContextLib.itemBoxController(cc)), itemId);
+    } else {
+      IItem(item).controlledTransfer(hero, inputTakeOff.destination, itemId);
+    }
 
-    emit IApplicationEvents.TakenOff(item, itemId, heroToken, heroTokenId, itemSlot, destination);
+    emit IApplicationEvents.TakenOff(item, itemId, hero, heroId, itemSlot, inputTakeOff.destination);
   }
+
+
   //endregion ------------------------ Internal logic - equip and take off
 
   //region ------------------------ Internal logic - augment, repair
-
-  /// @notice Initialization for augment() and repairDurability()
-  /// Get {meta} and {info}, check some restrictions
-  function _prepareToAugment(
-    bool isEoa,
-    IController controller,
-    address msgSender,
-    address item,
-    uint itemId,
-    uint consumedItemId
-  ) internal view returns(
-    IItemController.ItemMeta memory meta,
-    IItemController.ItemInfo memory info
-  ) {
-    _checkPauseEoaOwner(isEoa, controller, msgSender, item, itemId);
-    onlyOwner(item, consumedItemId, msgSender);
-
-    if (itemId == consumedItemId) revert IAppErrors.SameIdsNotAllowed();
-    meta = ItemLib.unpackedItemMeta(_S().itemMeta[item]);
-    info = ItemLib.unpackedItemInfo(_S().itemInfo[item.packNftId(itemId)]);
-
-    onlyNotEquippedItem(item, itemId);
-    onlyNotEquippedItem(item, consumedItemId);
-  }
 
   /// @notice Destroy {consumed item} to repair durability of the {item}
   /// There is a chance ~ item fragility that the item won't be repaired.
   /// @param random_ Pass _pseudoRandom here, param is required to simplify unit testing
   function _repairDurability(
-    bool isEoa,
-    IController controller,
-    address msgSender,
+    ItemLib.SenderInfo memory senderInfo,
+    ControllerContextLib.ControllerContext memory cc,
     address item,
     uint itemId,
     uint consumedItemId,
     function (uint) internal view returns (uint) random_
   ) internal {
     // restrictions are checked inside {_prepareToAugment}
-    IItemController.MainState storage s = _S();
     (
       IItemController.ItemMeta memory meta,
-      IItemController.ItemInfo memory _itemInfo
-    ) = _prepareToAugment(isEoa, controller, msgSender, item, itemId, consumedItemId);
+      IItemController.ItemInfo memory _itemInfo,
+      bool[2] memory inSandbox
+    ) = ItemLib._prepareToAugment(ItemLib._S(), cc, senderInfo, item, itemId, consumedItemId, true);
 
     if (meta.baseDurability == 0) revert IAppErrors.ZeroDurability();
 
-    _destroy(item, consumedItemId);
-    _sendFee(s, controller, item, msgSender);
+    ItemLib._destroy(cc, item, consumedItemId, inSandbox[1]);
+    ItemLib._sendFee(cc.controller, item, senderInfo.msgSender, block.chainid == uint(146) ? 10 : 1);
 
     // SIP-003: There is a chance of unsuccessful repair ~ to the item fragility
     uint fragility = itemFragility(item, itemId);
@@ -865,43 +658,12 @@ library ItemStatsLib {
     // try to hide gas difference between successful and failed cases
     _addItemFragility(item, itemId, success && incFragility ? FRAGILITY_SUCCESSFUL_REPAIR_PORTION : 0); // item fragility is increased
 
-    s.itemInfo[item.packNftId(itemId)] = ItemLib.packItemInfo(_itemInfo);
+    ItemLib._S().itemInfo[item.packNftId(itemId)] = ItemLib.packItemInfo(_itemInfo);
 
     if (success) {
       emit IApplicationEvents.ItemRepaired(item, itemId, consumedItemId, meta.baseDurability);
     } else {
       emit IApplicationEvents.FailedToRepairItem(item, itemId, consumedItemId, _itemInfo.durability);
-    }
-  }
-
-  /// @notice Modify either positive or negative values
-  /// @param ignoreNegative True - leave unchanged all negative values, False - don't change all positive values
-  function _augmentAttributes(bytes32[] memory packedAttr, bool ignoreNegative) internal pure returns (
-    int32[] memory values,
-    uint8[] memory ids
-  ) {
-    (values, ids) = packedAttr.toInt32ArrayWithIds();
-    for (uint i; i < values.length; ++i) {
-      // do not increase destroy item attribute
-      if(uint(ids[i]) == uint(IStatController.ATTRIBUTES.DESTROY_ITEMS)) {
-        continue;
-      }
-      if ((ignoreNegative && values[i] > 0) || (!ignoreNegative && values[i] < 0)) {
-        values[i] = _augmentAttribute(values[i]);
-      }
-    }
-  }
-
-  /// @notice Increase/decrease positive/negative value on ceil(value/20) but at least on 1
-  function _augmentAttribute(int32 value) internal pure returns (int32) {
-    if (value == 0) {
-      return 0;
-    }
-    // bonus must be not lower than 1
-    if (value > 0) {
-      return value + int32(int(Math.max(Math.ceilDiv(value.toUint(), AUGMENT_FACTOR), 1)));
-    } else {
-      return value - int32(int(Math.max(Math.ceilDiv((- value).toUint(), AUGMENT_FACTOR), 1)));
     }
   }
   //endregion ------------------------ Internal logic - augment, repair
@@ -948,30 +710,17 @@ library ItemStatsLib {
       : 0;
   }
 
-  function _destroy(address item, uint itemId) internal {
-    IItem(item).burn(itemId);
-    emit IApplicationEvents.Destroyed(item, itemId);
-  }
-
-  /// @return augToken Return augToken to avoid repeat reading of augmentInfo inside augment()
-  function _sendFee(
-    IItemController.MainState storage s,
-    IController controller,
-    address item,
-    address msgSender
-  ) internal returns (address augToken) {
-    (address token, uint amount) = s.augmentInfo[item].unpackAddressWithAmount();
-    if (token != address(0)) {
-      controller.process(token, amount, msgSender);
-    }
-    return token;
-  }
-
   function _addItemFragility(address item, uint itemId, uint portion) internal {
-    uint fragility = _S().itemFragility[item.packNftId(itemId)];
-    _S().itemFragility[item.packNftId(itemId)] = fragility + portion > MAX_FRAGILITY
+    uint fragility = ItemLib._S().itemFragility[item.packNftId(itemId)];
+    ItemLib._S().itemFragility[item.packNftId(itemId)] = fragility + portion > MAX_FRAGILITY
       ? MAX_FRAGILITY
       : fragility + portion;
+  }
+
+  function _getSandboxMode(ControllerContextLib.ControllerContext memory cc, address hero, uint heroId) internal view returns (
+    IHeroController.SandboxMode sandboxMode
+  ) {
+    return IHeroController.SandboxMode(ControllerContextLib.heroController(cc).sandboxMode(hero, heroId));
   }
   //endregion ------------------------ Internal logic - durability, destroy, fee, fragility
 }

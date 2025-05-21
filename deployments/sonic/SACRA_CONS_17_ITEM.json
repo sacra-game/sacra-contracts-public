@@ -1,0 +1,144 @@
+{
+  "address": "0xaB113b174D3AdEf7f72d30de532Daf368efaC7ff",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_logic",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "constructor"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "implementation",
+          "type": "address"
+        }
+      ],
+      "name": "Upgraded",
+      "type": "event"
+    },
+    {
+      "stateMutability": "payable",
+      "type": "fallback"
+    },
+    {
+      "inputs": [],
+      "name": "PROXY_CONTROLLED_VERSION",
+      "outputs": [
+        {
+          "internalType": "string",
+          "name": "",
+          "type": "string"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "implementation",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "newImplementation_",
+          "type": "address"
+        }
+      ],
+      "name": "upgrade",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "stateMutability": "payable",
+      "type": "receive"
+    }
+  ],
+  "transactionHash": "0x7ef700f9d3724c3c4cf6955b40dac9ba118c44d53368063eaf8b95f5a9efd61f",
+  "receipt": {
+    "to": null,
+    "from": "0xbbbbb8C4364eC2ce52c59D2Ed3E56F307E529a94",
+    "contractAddress": "0xaB113b174D3AdEf7f72d30de532Daf368efaC7ff",
+    "transactionIndex": 0,
+    "gasUsed": "354311",
+    "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "blockHash": "0xa9c903eb5501cc0eba09bdd120e5d37d67ab77b101c15066a5bb761065ff429e",
+    "transactionHash": "0x7ef700f9d3724c3c4cf6955b40dac9ba118c44d53368063eaf8b95f5a9efd61f",
+    "logs": [],
+    "blockNumber": 270972,
+    "cumulativeGasUsed": "354311",
+    "status": 1,
+    "byzantium": true
+  },
+  "args": [
+    "0x0A0846c978a56D6ea9D2602eeb8f977B21F3207F"
+  ],
+  "numDeployments": 1,
+  "solcInputHash": "16985c9b56ef3e837ac22e18deab0d1a",
+  "metadata": "{\"compiler\":{\"version\":\"0.8.23+commit.f704f362\"},\"language\":\"Solidity\",\"output\":{\"abi\":[{\"inputs\":[{\"internalType\":\"address\",\"name\":\"_logic\",\"type\":\"address\"}],\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"implementation\",\"type\":\"address\"}],\"name\":\"Upgraded\",\"type\":\"event\"},{\"stateMutability\":\"payable\",\"type\":\"fallback\"},{\"inputs\":[],\"name\":\"PROXY_CONTROLLED_VERSION\",\"outputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"implementation\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"newImplementation_\",\"type\":\"address\"}],\"name\":\"upgrade\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"stateMutability\":\"payable\",\"type\":\"receive\"}],\"devdoc\":{\"author\":\"belbix\",\"details\":\"Only Controller has access and should implement time-lock for upgrade action.\",\"events\":{\"Upgraded(address)\":{\"details\":\"Emitted when the implementation is upgraded.\"}},\"kind\":\"dev\",\"methods\":{\"upgrade(address)\":{\"details\":\"Upgrade allowed only for Controller and should be done only after time-lock period\",\"params\":{\"newImplementation_\":\"Implementation address\"}}},\"stateVariables\":{\"PROXY_CONTROLLED_VERSION\":{\"details\":\"Should be incremented when contract changed\"}},\"title\":\"EIP1967 Upgradable proxy implementation.\",\"version\":1},\"userdoc\":{\"kind\":\"user\",\"methods\":{\"PROXY_CONTROLLED_VERSION()\":{\"notice\":\"Version of the contract\"},\"implementation()\":{\"notice\":\"Return current logic implementation\"},\"upgrade(address)\":{\"notice\":\"Upgrade contract logic\"}},\"version\":1}},\"settings\":{\"compilationTarget\":{\"contracts/proxy/ProxyControlled.sol\":\"ProxyControlled\"},\"evmVersion\":\"istanbul\",\"libraries\":{},\"metadata\":{\"bytecodeHash\":\"ipfs\",\"useLiteralContent\":true},\"optimizer\":{\"enabled\":true,\"runs\":50},\"remappings\":[]},\"sources\":{\"contracts/interfaces/IControllable.sol\":{\"content\":\"// SPDX-License-Identifier: BUSL-1.1\\n\\npragma solidity 0.8.23;\\n\\ninterface IControllable {\\n\\n  function VERSION() external pure returns (string memory);\\n\\n  function revision() external view returns (uint);\\n\\n  function previousImplementation() external view returns (address);\\n\\n  function isController(address contract_) external view returns (bool);\\n\\n  function isGovernance(address contract_) external view returns (bool);\\n\\n  function created() external view returns (uint256);\\n\\n  function createdBlock() external view returns (uint256);\\n\\n  function controller() external view returns (address);\\n\\n  function increaseRevision(address oldLogic) external;\\n\\n}\\n\",\"keccak256\":\"0x296b634c46b5d178b2408523fcf569ed370e20a719b7b3f2183b278631b94f65\",\"license\":\"BUSL-1.1\"},\"contracts/interfaces/IProxyControlled.sol\":{\"content\":\"// SPDX-License-Identifier: BUSL-1.1\\n\\npragma solidity 0.8.23;\\n\\ninterface IProxyControlled {\\n\\n  function upgrade(address newImplementation_) external;\\n\\n  function implementation() external view returns (address);\\n\\n}\\n\",\"keccak256\":\"0xfeb4690babcbc0bc349e9bb62d6f48be9f53fb1ede347805d1c386b5b3b3defe\",\"license\":\"BUSL-1.1\"},\"contracts/openzeppelin/Proxy.sol\":{\"content\":\"// SPDX-License-Identifier: MIT\\n\\npragma solidity ^0.8.0;\\n\\n/**\\n * @dev This abstract contract provides a fallback function that delegates all calls to another contract using the EVM\\n * instruction `delegatecall`. We refer to the second contract as the _implementation_ behind the proxy, and it has to\\n * be specified by overriding the virtual {_implementation} function.\\n *\\n * Additionally, delegation to the implementation can be triggered manually through the {_fallback} function, or to a\\n * different contract through the {_delegate} function.\\n *\\n * The success and return data of the delegated call will be returned back to the caller of the proxy.\\n */\\nabstract contract Proxy {\\n  /**\\n   * @dev Delegates the current call to `implementation`.\\n   *\\n   * This function does not return to its internall call site, it will return directly to the external caller.\\n   */\\n  function _delegate(address implementation) internal virtual {\\n    assembly {\\n    // Copy msg.data. We take full control of memory in this inline assembly\\n    // block because it will not return to Solidity code. We overwrite the\\n    // Solidity scratch pad at memory position 0.\\n      calldatacopy(0, 0, calldatasize())\\n\\n    // Call the implementation.\\n    // out and outsize are 0 because we don't know the size yet.\\n      let result := delegatecall(gas(), implementation, 0, calldatasize(), 0, 0)\\n\\n    // Copy the returned data.\\n      returndatacopy(0, 0, returndatasize())\\n\\n      switch result\\n      // delegatecall returns 0 on error.\\n      case 0 {\\n        revert(0, returndatasize())\\n      }\\n      default {\\n        return (0, returndatasize())\\n      }\\n    }\\n  }\\n\\n  /**\\n   * @dev This is a virtual function that should be overriden so it returns the address to which the fallback function\\n   * and {_fallback} should delegate.\\n   */\\n  function _implementation() internal view virtual returns (address);\\n\\n  /**\\n   * @dev Delegates the current call to the address returned by `_implementation()`.\\n   *\\n   * This function does not return to its internall call site, it will return directly to the external caller.\\n   */\\n  function _fallback() internal virtual {\\n    _beforeFallback();\\n    _delegate(_implementation());\\n  }\\n\\n  /**\\n   * @dev Fallback function that delegates calls to the address returned by `_implementation()`. Will run if no other\\n   * function in the contract matches the call data.\\n   */\\n  fallback() external payable virtual {\\n    _fallback();\\n  }\\n\\n  /**\\n   * @dev Fallback function that delegates calls to the address returned by `_implementation()`. Will run if call data\\n   * is empty.\\n   */\\n  receive() external payable virtual {\\n    _fallback();\\n  }\\n\\n  /**\\n   * @dev Hook that is called before falling back to the implementation. Can happen as part of a manual `_fallback`\\n   * call, or as part of the Solidity `fallback` or `receive` functions.\\n   *\\n   * If overriden should call `super._beforeFallback()`.\\n   */\\n  function _beforeFallback() internal virtual {}\\n}\\n\",\"keccak256\":\"0xc0524c220f23e7eee8b7fee20ef96efa579a808d3a641600f941f516a302efde\",\"license\":\"MIT\"},\"contracts/proxy/ProxyControlled.sol\":{\"content\":\"// SPDX-License-Identifier: BUSL-1.1\\n/**\\n            \\u2592\\u2593\\u2592  \\u2592\\u2592\\u2592\\u2592\\u2592\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2588\\u2588\\u2588\\u2593\\u2593\\u2592     \\u2592\\u2592\\u2592\\u2592\\u2593\\u2593\\u2593\\u2592\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2588\\u2588\\u2593\\n             \\u2592\\u2588\\u2588\\u2592\\u2593\\u2593\\u2593\\u2593\\u2588\\u2593\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2593  \\u2592\\u2592\\u2592\\u2593\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2592\\n              \\u2592\\u2588\\u2588\\u2592\\u2593\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2592 \\u2592\\u2593\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2593\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\n               \\u2592\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2593\\u2592                   \\u2592\\u2588\\u2588\\u2588\\u2593\\u2593\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2593\\n                 \\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2592                     \\u2592\\u2593\\u2592\\u2593\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2592\\n                  \\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2593      \\u2592\\u2592\\u2592\\u2592\\u2592\\u2593\\u2593\\u2588\\u2593\\u2592     \\u2593\\u2588\\u2593\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\n                   \\u2592\\u2592\\u2592\\u2592\\u2592   \\u2592\\u2592\\u2592\\u2592\\u2593\\u2593\\u2593\\u2588\\u2588\\u2588\\u2588\\u2588\\u2592      \\u2593\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2593\\n                         \\u2592\\u2593\\u2593\\u2593\\u2592\\u2593\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2593      \\u2592\\u2593\\u2593\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2592\\n                       \\u2592\\u2588\\u2588\\u2593\\u2593\\u2593\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2592      \\u2592\\u2592\\u2593\\u2588\\u2588\\u2588\\u2593\\u2588\\u2588\\u2588\\u2588\\n                        \\u2592\\u2588\\u2588\\u2588\\u2593\\u2588\\u2588\\u2588\\u2588\\u2588\\u2592       \\u2592\\u2592\\u2588\\u2588\\u2588\\u2588\\u2588\\u2593\\u2588\\u2588\\u2593\\n                          \\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2593   \\u2592\\u2592\\u2592\\u2593\\u2588\\u2588\\u2593\\u2588\\u2588\\u2593\\u2588\\u2588\\u2588\\u2588\\u2588\\u2592\\n                           \\u2592\\u2592\\u2593\\u2593\\u2592   \\u2592\\u2588\\u2588\\u2593\\u2592\\u2593\\u2593\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\n                                  \\u2593\\u2588\\u2588\\u2588\\u2588\\u2588\\u2593\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2593\\n                                 \\u2588\\u2588\\u2593\\u2593\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2592\\n                                \\u2592\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\n                                 \\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2593\\n      \\u2592\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2592\\u2593                  \\u2592\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2592                      \\u2592\\u2593\\u2593\\n    \\u2592\\u2593\\u2588\\u2592   \\u2592\\u2592\\u2588\\u2592\\u2592                   \\u2593\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588                       \\u2592\\u2592\\u2593\\u2593\\u2592\\n   \\u2592\\u2592\\u2588\\u2592       \\u2593\\u2592                    \\u2592\\u2588\\u2588\\u2588\\u2588                       \\u2592\\u2593\\u2588\\u2593\\u2588\\u2593\\u2592\\n   \\u2593\\u2592\\u2588\\u2588\\u2593\\u2592                             \\u2588\\u2588                       \\u2592\\u2593\\u2588\\u2593\\u2593\\u2593\\u2588\\u2588\\u2592\\n    \\u2593\\u2588\\u2593\\u2593\\u2593\\u2593\\u2593\\u2588\\u2593\\u2593\\u2593\\u2592        \\u2592\\u2592\\u2592         \\u2592\\u2592\\u2592\\u2593\\u2593\\u2593\\u2593\\u2592\\u2593\\u2592\\u2592\\u2593\\u2592\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2592    \\u2592\\u2593\\u2588\\u2592 \\u2592\\u2593\\u2592\\u2593\\u2588\\u2593\\n     \\u2592\\u2593\\u2588\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2592    \\u2592\\u2592\\u2592\\u2593\\u2592     \\u2592\\u2592\\u2592\\u2593\\u2593     \\u2593\\u2593  \\u2593\\u2593\\u2588\\u2593   \\u2592\\u2592\\u2593\\u2593   \\u2592\\u2592\\u2588\\u2592   \\u2592\\u2593\\u2592\\u2593\\u2588\\u2593\\n            \\u2592\\u2592\\u2593\\u2593\\u2593\\u2592\\u2593\\u2592  \\u2592\\u2593\\u2593\\u2593\\u2592\\u2588\\u2592   \\u2592\\u2592\\u2592\\u2588\\u2592          \\u2592\\u2592\\u2588\\u2593\\u2592\\u2592\\u2592\\u2593\\u2593\\u2593\\u2592   \\u2593\\u2588\\u2588\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2588\\u2588\\u2588\\u2593\\n \\u2592            \\u2592\\u2593\\u2593\\u2588\\u2593  \\u2592\\u2593\\u2593\\u2593\\u2593\\u2588\\u2593\\u2588\\u2593  \\u2592\\u2588\\u2593\\u2593\\u2592          \\u2593\\u2593\\u2588\\u2593\\u2592\\u2593\\u2588\\u2593\\u2592\\u2592   \\u2593\\u2588\\u2593        \\u2593\\u2588\\u2588\\u2588\\u2593\\n\\u2593\\u2593\\u2592         \\u2592\\u2592\\u2593\\u2593\\u2588\\u2593\\u2592\\u2592\\u2593\\u2588\\u2592   \\u2592\\u2593\\u2588\\u2588\\u2593  \\u2593\\u2588\\u2588\\u2593\\u2592     \\u2592\\u2588\\u2593 \\u2593\\u2593\\u2588\\u2588   \\u2592\\u2593\\u2593\\u2593\\u2592\\u2592\\u2593\\u2588\\u2593        \\u2592\\u2593\\u2588\\u2588\\u2588\\u2588\\u2592\\n \\u2588\\u2588\\u2593\\u2593\\u2592\\u2592\\u2592\\u2592\\u2593\\u2593\\u2588\\u2588\\u2588\\u2593\\u2592 \\u2592\\u2593\\u2593\\u2593\\u2593\\u2592\\u2592 \\u2592\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2593\\u2592\\u2592\\u2592\\u2593\\u2588\\u2593\\u2593\\u2593\\u2593\\u2588\\u2593\\u2593\\u2592\\u2592\\u2593\\u2593\\u2593\\u2593\\u2593\\u2592    \\u2592\\u2593\\u2588\\u2588\\u2588\\u2588\\u2593\\u2592     \\u2593\\u2593\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2588\\u2593\\u2593\\u2592\\n*/\\npragma solidity 0.8.23;\\n\\n\\nimport \\\"./UpgradeableProxy.sol\\\";\\nimport \\\"../interfaces/IControllable.sol\\\";\\nimport \\\"../interfaces/IProxyControlled.sol\\\";\\n\\n/// @title EIP1967 Upgradable proxy implementation.\\n/// @dev Only Controller has access and should implement time-lock for upgrade action.\\n/// @author belbix\\ncontract ProxyControlled is UpgradeableProxy, IProxyControlled {\\n\\n  /// @notice Version of the contract\\n  /// @dev Should be incremented when contract changed\\n  string public constant PROXY_CONTROLLED_VERSION = \\\"1.0.0\\\";\\n\\n\\n  constructor(address _logic) UpgradeableProxy(_logic) {\\n    //make sure that given logic is controllable\\n    require(IControllable(_logic).created() >= 0);\\n  }\\n\\n  /// @notice Upgrade contract logic\\n  /// @dev Upgrade allowed only for Controller and should be done only after time-lock period\\n  /// @param newImplementation_ Implementation address\\n  function upgrade(address newImplementation_) external override {\\n    require(IControllable(address(this)).isController(msg.sender), \\\"Proxy: Forbidden\\\");\\n    IControllable(address(this)).increaseRevision(_implementation());\\n    _upgradeTo(newImplementation_);\\n    // the new contract must have the same ABI and you must have the power to change it again\\n    require(IControllable(address(this)).isController(msg.sender), \\\"Proxy: Wrong implementation\\\");\\n  }\\n\\n  /// @notice Return current logic implementation\\n  function implementation() external override view returns (address) {\\n    return _implementation();\\n  }\\n}\\n\",\"keccak256\":\"0x53e8dd98e01e55a3cd308cd395b207fda69ca9f50d3cfc08f2499ed2acff80bd\",\"license\":\"BUSL-1.1\"},\"contracts/proxy/UpgradeableProxy.sol\":{\"content\":\"// SPDX-License-Identifier: MIT\\n\\npragma solidity 0.8.23;\\n\\nimport \\\"../openzeppelin/Proxy.sol\\\";\\n\\n/// @title OpenZeppelin https://github.com/OpenZeppelin/openzeppelin-contracts/blob/release-v3.4/contracts/proxy/UpgradeableProxy.sol\\n/// @dev This contract implements an upgradeable proxy. It is upgradeable because calls are delegated to an\\n///      implementation address that can be changed. This address is stored in storage in the location specified by\\n///      https://eips.ethereum.org/EIPS/eip-1967[EIP1967], so that it doesn't conflict with the storage layout of the\\n///      implementation behind the proxy.\\n///      Upgradeability is only provided internally through {_upgradeTo}. For an externally upgradeable proxy see\\n///      {TransparentUpgradeableProxy}.\\nabstract contract UpgradeableProxy is Proxy {\\n\\n  /// @dev Initializes the upgradeable proxy with an initial implementation specified by `_logic`.\\n  ///      If `_data` is nonempty, it's used as data in a delegate call to `_logic`. This will typically be an encoded\\n  ///      function call, and allows initializating the storage of the proxy like a Solidity constructor.\\n  constructor(address _logic) payable {\\n    assert(_IMPLEMENTATION_SLOT == bytes32(uint256(keccak256(\\\"eip1967.proxy.implementation\\\")) - 1));\\n    _setImplementation(_logic);\\n  }\\n\\n  /// @dev Emitted when the implementation is upgraded.\\n  event Upgraded(address indexed implementation);\\n\\n  ///@dev Storage slot with the address of the current implementation.\\n  ///     This is the keccak-256 hash of \\\"eip1967.proxy.implementation\\\" subtracted by 1, and is\\n  ///     validated in the constructor.\\n  bytes32 private constant _IMPLEMENTATION_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;\\n\\n  /// @dev Returns the current implementation address.\\n  function _implementation() internal view virtual override returns (address impl) {\\n    bytes32 slot = _IMPLEMENTATION_SLOT;\\n    // solhint-disable-next-line no-inline-assembly\\n    assembly {\\n      impl := sload(slot)\\n    }\\n  }\\n\\n  /// @dev Upgrades the proxy to a new implementation.\\n  ///      Emits an {Upgraded} event.\\n  function _upgradeTo(address newImplementation) internal virtual {\\n    _setImplementation(newImplementation);\\n    emit Upgraded(newImplementation);\\n  }\\n\\n  /// @dev Stores a new address in the EIP1967 implementation slot.\\n  function _setImplementation(address newImplementation) private {\\n    require(newImplementation.code.length != 0, \\\"UpgradeableProxy: new implementation is not a contract\\\");\\n\\n    bytes32 slot = _IMPLEMENTATION_SLOT;\\n\\n    // solhint-disable-next-line no-inline-assembly\\n    assembly {\\n      sstore(slot, newImplementation)\\n    }\\n  }\\n}\\n\",\"keccak256\":\"0x799bd89674a7e5b496140294a0bf5a9fc52bac15850c52c3a64511022e77dc09\",\"license\":\"MIT\"}},\"version\":1}",
+  "bytecode": "0x608060405234801561001057600080fd5b5060405161070938038061070983398101604081905261002f9161018c565b8061005b60017f360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbd6101bc565b6000805160206106e983398151915214610077576100776101e3565b610080816100f6565b506000816001600160a01b031663325a19f16040518163ffffffff1660e01b8152600401602060405180830381865afa1580156100c1573d6000803e3d6000fd5b505050506040513d601f19601f820116820180604052508101906100e591906101f9565b10156100f057600080fd5b50610212565b806001600160a01b03163b60000361017a5760405162461bcd60e51b815260206004820152603660248201527f5570677261646561626c6550726f78793a206e657720696d706c656d656e746160448201527f74696f6e206973206e6f74206120636f6e747261637400000000000000000000606482015260840160405180910390fd5b6000805160206106e983398151915255565b60006020828403121561019e57600080fd5b81516001600160a01b03811681146101b557600080fd5b9392505050565b818103818111156101dd57634e487b7160e01b600052601160045260246000fd5b92915050565b634e487b7160e01b600052600160045260246000fd5b60006020828403121561020b57600080fd5b5051919050565b6104c8806102216000396000f3fe6080604052600436106100385760003560e01c80630900f0101461004f5780633bc845301461006f5780635c60da1b146100b657610047565b36610047576100456100d8565b005b6100456100d8565b34801561005b57600080fd5b5061004561006a3660046103dd565b6100ea565b34801561007b57600080fd5b506100a0604051806040016040528060058152602001640312e302e360dc1b81525081565b6040516100ad919061040d565b60405180910390f35b3480156100c257600080fd5b506100cb6102a8565b6040516100ad919061045c565b6100e86100e36102b7565b6102dc565b565b60405163b429afeb60e01b8152309063b429afeb9061010d90339060040161045c565b602060405180830381865afa15801561012a573d6000803e3d6000fd5b505050506040513d601f19601f8201168201806040525081019061014e9190610470565b6101925760405162461bcd60e51b815260206004820152601060248201526f283937bc3c9d102337b93134b23232b760811b60448201526064015b60405180910390fd5b30634fac6ccd6101a06102b7565b6040518263ffffffff1660e01b81526004016101bc919061045c565b600060405180830381600087803b1580156101d657600080fd5b505af11580156101ea573d6000803e3d6000fd5b505050506101f781610300565b60405163b429afeb60e01b8152309063b429afeb9061021a90339060040161045c565b602060405180830381865afa158015610237573d6000803e3d6000fd5b505050506040513d601f19601f8201168201806040525081019061025b9190610470565b6102a55760405162461bcd60e51b815260206004820152601b60248201527a283937bc3c9d102bb937b7339034b6b83632b6b2b73a30ba34b7b760291b6044820152606401610189565b50565b60006102b26102b7565b905090565b7f360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc5490565b3660008037600080366000845af43d6000803e8080156102fb573d6000f35b3d6000fd5b61030981610340565b6040516001600160a01b038216907fbc7cd75a20ee27fd9adebab32041f755214dbc6bffa90cc0225b39da2e5c2d3b90600090a250565b806001600160a01b03163b6000036103b95760405162461bcd60e51b815260206004820152603660248201527f5570677261646561626c6550726f78793a206e657720696d706c656d656e74616044820152751d1a5bdb881a5cc81b9bdd08184818dbdb9d1c9858dd60521b6064820152608401610189565b7f360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc55565b6000602082840312156103ef57600080fd5b81356001600160a01b038116811461040657600080fd5b9392505050565b60006020808352835180602085015260005b8181101561043b5785810183015185820160400152820161041f565b506000604082860101526040601f19601f8301168501019250505092915050565b6001600160a01b0391909116815260200190565b60006020828403121561048257600080fd5b8151801515811461040657600080fdfea2646970667358221220483dd349a6a96a9c79e983f237b6fa176adbf5f8652b1313f4595d0dd8afd2db64736f6c63430008170033360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
+  "deployedBytecode": "0x6080604052600436106100385760003560e01c80630900f0101461004f5780633bc845301461006f5780635c60da1b146100b657610047565b36610047576100456100d8565b005b6100456100d8565b34801561005b57600080fd5b5061004561006a3660046103dd565b6100ea565b34801561007b57600080fd5b506100a0604051806040016040528060058152602001640312e302e360dc1b81525081565b6040516100ad919061040d565b60405180910390f35b3480156100c257600080fd5b506100cb6102a8565b6040516100ad919061045c565b6100e86100e36102b7565b6102dc565b565b60405163b429afeb60e01b8152309063b429afeb9061010d90339060040161045c565b602060405180830381865afa15801561012a573d6000803e3d6000fd5b505050506040513d601f19601f8201168201806040525081019061014e9190610470565b6101925760405162461bcd60e51b815260206004820152601060248201526f283937bc3c9d102337b93134b23232b760811b60448201526064015b60405180910390fd5b30634fac6ccd6101a06102b7565b6040518263ffffffff1660e01b81526004016101bc919061045c565b600060405180830381600087803b1580156101d657600080fd5b505af11580156101ea573d6000803e3d6000fd5b505050506101f781610300565b60405163b429afeb60e01b8152309063b429afeb9061021a90339060040161045c565b602060405180830381865afa158015610237573d6000803e3d6000fd5b505050506040513d601f19601f8201168201806040525081019061025b9190610470565b6102a55760405162461bcd60e51b815260206004820152601b60248201527a283937bc3c9d102bb937b7339034b6b83632b6b2b73a30ba34b7b760291b6044820152606401610189565b50565b60006102b26102b7565b905090565b7f360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc5490565b3660008037600080366000845af43d6000803e8080156102fb573d6000f35b3d6000fd5b61030981610340565b6040516001600160a01b038216907fbc7cd75a20ee27fd9adebab32041f755214dbc6bffa90cc0225b39da2e5c2d3b90600090a250565b806001600160a01b03163b6000036103b95760405162461bcd60e51b815260206004820152603660248201527f5570677261646561626c6550726f78793a206e657720696d706c656d656e74616044820152751d1a5bdb881a5cc81b9bdd08184818dbdb9d1c9858dd60521b6064820152608401610189565b7f360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc55565b6000602082840312156103ef57600080fd5b81356001600160a01b038116811461040657600080fd5b9392505050565b60006020808352835180602085015260005b8181101561043b5785810183015185820160400152820161041f565b506000604082860101526040601f19601f8301168501019250505092915050565b6001600160a01b0391909116815260200190565b60006020828403121561048257600080fd5b8151801515811461040657600080fdfea2646970667358221220483dd349a6a96a9c79e983f237b6fa176adbf5f8652b1313f4595d0dd8afd2db64736f6c63430008170033",
+  "devdoc": {
+    "author": "belbix",
+    "details": "Only Controller has access and should implement time-lock for upgrade action.",
+    "events": {
+      "Upgraded(address)": {
+        "details": "Emitted when the implementation is upgraded."
+      }
+    },
+    "kind": "dev",
+    "methods": {
+      "upgrade(address)": {
+        "details": "Upgrade allowed only for Controller and should be done only after time-lock period",
+        "params": {
+          "newImplementation_": "Implementation address"
+        }
+      }
+    },
+    "stateVariables": {
+      "PROXY_CONTROLLED_VERSION": {
+        "details": "Should be incremented when contract changed"
+      }
+    },
+    "title": "EIP1967 Upgradable proxy implementation.",
+    "version": 1
+  },
+  "userdoc": {
+    "kind": "user",
+    "methods": {
+      "PROXY_CONTROLLED_VERSION()": {
+        "notice": "Version of the contract"
+      },
+      "implementation()": {
+        "notice": "Return current logic implementation"
+      },
+      "upgrade(address)": {
+        "notice": "Upgrade contract logic"
+      }
+    },
+    "version": 1
+  },
+  "storageLayout": {
+    "storage": [],
+    "types": null
+  }
+}

@@ -75,6 +75,14 @@ interface IFightCalculator {
     uint8 turn;
   }
 
+  /// @notice Additional info passed to fight
+  struct FightCallAdd {
+    address msgSender;
+
+    /// @notice Unique ID of the pvp-fight, 0 for not pvp fights
+    uint48 fightId;
+  }
+
   struct SkillSlots {
     bool slot1;
     bool slot2;

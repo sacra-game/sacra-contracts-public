@@ -180,6 +180,10 @@ contract GuildController is Initializable, Controllable, ERC2771Context, IGuildC
     return GuildLib.getGuildDescription(guildId);
   }
 
+  function getGuildBanner(uint guildId) external view returns (string memory) {
+    return GuildLib.getGuildBanner(guildId);
+  }
+
   //endregion ------------------------ Views
 
   //region ------------------------ Gov actions
@@ -235,6 +239,10 @@ contract GuildController is Initializable, Controllable, ERC2771Context, IGuildC
     GuildLib.changeDescription(IController(controller()), _msgSender(), newDescription);
   }
 
+  function changeBanner(string memory newBanner) external {
+    GuildLib.changeBanner(IController(controller()), _msgSender(), newBanner);
+  }
+
   function setRelation(uint otherGuildId, bool peace) external {
     GuildLib.setRelation(IController(controller()), _msgSender(), otherGuildId, peace);
   }
@@ -243,6 +251,10 @@ contract GuildController is Initializable, Controllable, ERC2771Context, IGuildC
   /// @param value Percent in the range [10..50], see constants in ReinforcementControllerLib
   function setToHelperRatio(uint8 value) external {
     GuildLib.setToHelperRatio(IController(controller()), _msgSender(), value);
+  }
+
+  function incPvpCounter(uint guildId, uint64 value) external {
+    GuildLib.incPvpCounter(IController(controller()), guildId, value);
   }
 
   /// @notice Set max amount of pvp-points that is allowed to be used by each guild member
@@ -254,7 +266,6 @@ contract GuildController is Initializable, Controllable, ERC2771Context, IGuildC
   function transferOwnership(address newAdmin) external {
     GuildLib.transferOwnership(IController(controller()), _msgSender(), newAdmin);
   }
-
   //endregion ------------------------ Actions
 
   //region ------------------------ Guild requests

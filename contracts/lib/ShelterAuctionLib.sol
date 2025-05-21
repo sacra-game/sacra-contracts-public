@@ -158,8 +158,8 @@ library ShelterAuctionLib {
     return positionId;
   }
 
-  /// @notice Seller action. Close not executed position.
-  function closePosition(IController controller, address msgSender, uint positionId, uint auctionDuration, uint blockTimestamp) internal {
+  /// @notice Seller action. Close position without any bids.
+  function closePosition(IController controller, address msgSender, uint positionId) internal {
     _onlyNotPaused(controller);
 
     // Any member of the seller-guild can close position if he has enough permission.
@@ -173,7 +173,7 @@ library ShelterAuctionLib {
     if (!pos.open) revert IAppErrors.AuctionPositionClosed();
 
     uint lastBidTimestamp = _S().lastAuctionBidTs[positionId];
-    if (lastBidTimestamp != 0 && lastBidTimestamp + auctionDuration < blockTimestamp) revert IAppErrors.AuctionEnded();
+    if (lastBidTimestamp != 0) revert IAppErrors.AuctionBidExists();
 
     _S().openPositions.remove(positionId);
     delete _S().sellerPosition[sellerGuildId];
@@ -184,7 +184,8 @@ library ShelterAuctionLib {
   }
 
   /// @notice Buyer action. Create new bid with amount higher than the amount of previously registered bid.
-  /// Assume approve for bid-amount
+  /// Close previous auction bid and transfer bid-amount back to the buyer.
+  /// Assume approve for bid-amount.
   function bid(
     IController controller,
     address msgSender,
@@ -203,8 +204,10 @@ library ShelterAuctionLib {
     if (!pos.open) revert IAppErrors.AuctionPositionClosed();
     if (pos.sellerGuildId == buyerGuildId) revert IAppErrors.AuctionSellerCannotBid();
 
-    IShelterAuction.BuyerPositionData storage buyerPos = _S().buyerPosition[buyerGuildId];
-    if (buyerPos.positionId != 0) revert IAppErrors.AuctionBidOpened(buyerPos.positionId);
+    {
+      IShelterAuction.BuyerPositionData storage buyerPos = _S().buyerPosition[buyerGuildId];
+      if (buyerPos.positionId != 0) revert IAppErrors.AuctionBidOpened(buyerPos.positionId);
+    }
 
     uint[] storage bidIds = _S().positionToBidIds[positionId];
 
@@ -219,6 +222,9 @@ library ShelterAuctionLib {
       if (_S().lastAuctionBidTs[positionId] + auctionDuration < blockTimestamp) revert IAppErrors.AuctionEnded();
       IShelterAuction.AuctionBid storage lastBid = _S().auctionBids[bidIds[length - 1]];
       if (lastBid.amount * NEXT_AMOUNT_RATIO / 100 > amount) revert IAppErrors.TooLowAmountForNewBid();
+
+      // automatically close previous last bid and return full amount to the bid's owner
+      _closeBidAndReturnAmount(lastBid, guildController, controller);
     }
 
     IShelterAuction.AuctionBid memory newBid = IShelterAuction.AuctionBid({
@@ -259,14 +265,10 @@ library ShelterAuctionLib {
     if (!_bid.open) revert IAppErrors.AuctionBidClosed();
 
     IShelterAuction.Position storage pos = _S().positions[positionId];
+    // assume here that only last bid can be opened, all previous bids are closed automatically
     if (!pos.open) revert IAppErrors.AuctionPositionClosed();
 
     if (_S().lastAuctionBidTs[positionId] + auctionDuration >= blockTimestamp) revert IAppErrors.AuctionNotEnded();
-
-    {
-      uint[] storage bidIds = _S().positionToBidIds[positionId];
-      if (bidIds[bidIds.length - 1] != bidId) revert IAppErrors.CannotApplyNotLastBid();
-    }
 
     uint sellerGuildId = pos.sellerGuildId;
     {
@@ -295,36 +297,8 @@ library ShelterAuctionLib {
 
     address sellerGuildBank = guildController.getGuildBank(sellerGuildId);
     IERC20(gameToken).transfer(sellerGuildBank, amount - toGov);
-  }
 
-  /// @notice Buyer action. Allow to close not last bid at any time.
-  /// Last (active) bid can be closed only if position is closed by the seller.
-  /// Close auction bid and transfer bid-amount back to the buyer.
-  function closeAuctionBid(IController controller, address msgSender, uint bidId) internal {
-    _onlyNotPaused(controller);
-
-    IGuildController guildController = IGuildController(controller.guildController());
-    (uint guildId, ) = _checkPermissions(msgSender, guildController, IGuildController.GuildRightBits.CHANGE_SHELTER_3);
-
-    IShelterAuction.AuctionBid storage _bid = _S().auctionBids[bidId];
-    uint positionId = _bid.positionId;
-    if (positionId == 0) revert IAppErrors.AuctionBidNotFound();
-    if (_bid.buyerGuildId != guildId) revert IAppErrors.AuctionBuyerOnly();
-    if (!_bid.open) revert IAppErrors.AuctionBidClosed();
-
-    uint[] storage bidIds = _S().positionToBidIds[positionId];
-    bool lastBid = bidIds[bidIds.length - 1] == bidId;
-
-    // close the bid
-    IShelterAuction.Position storage pos = _S().positions[positionId];
-    if (lastBid && pos.open) revert IAppErrors.CannotCloseLastBid();
-    _bid.open = false;
-    delete _S().buyerPosition[guildId];
-
-    // return full amount back to the buyer
-    address buyerGuildBank = guildController.getGuildBank(guildId);
-    address gameToken = controller.gameToken();
-    IERC20(gameToken).transfer(buyerGuildBank, _bid.amount);
+    emit IApplicationEvents.ApplyAuctionBid(bidId, msgSender);
   }
   //endregion ------------------------ Actions
 
@@ -334,10 +308,29 @@ library ShelterAuctionLib {
 
     if (fee_ > MAX_FEE) revert IAppErrors.TooHighValue(fee_);
     _S().params[IShelterAuction.ShelterAuctionParams.FEE_3] = fee_;
+
+    emit IApplicationEvents.AuctionSetFee(fee_);
   }
   //endregion ------------------------ Deployer actions
 
   //region ------------------------ Internal logic
+  /// @notice Close auction bid and transfer bid-amount back to the buyer.
+  function _closeBidAndReturnAmount(
+    IShelterAuction.AuctionBid storage bid_,
+    IGuildController guildController,
+    IController controller
+  ) internal {
+    uint guildId = bid_.buyerGuildId;
+
+    bid_.open = false;
+    delete _S().buyerPosition[guildId];
+
+    // return full amount back to the buyer
+    address buyerGuildBank = guildController.getGuildBank(guildId);
+    address gameToken = controller.gameToken();
+    IERC20(gameToken).transfer(buyerGuildBank, bid_.amount);
+  }
+
   /// @notice Generate id, increment id-counter
   /// @dev uint is used to store id. In the code we assume that it's safe to use uint128 to store such ids
   function _generateId(IShelterAuction.ShelterAuctionParams paramId) internal returns (uint uid) {

@@ -53,7 +53,7 @@ library StatControllerLib {
       && controller_.dungeonFactory() != sender
       && controller_.storyController() != sender
       && controller_.gameObjectController() != sender
-      // todo after pvp release: && controller_.pvpController() != sender
+      && controller_.pvpController() != sender
     ) revert IAppErrors.ErrorForbidden(sender);
 
     return IHeroController(heroController);
@@ -204,7 +204,7 @@ library StatControllerLib {
   /// @notice Calculate totalAttributes + all attributes of the items specified in {info}
   function buffHero(
     IStatController.MainState storage s,
-    IController c,
+    IController controller,
     IStatController.BuffInfo calldata info
   ) external view returns (
     int32[] memory dest,
@@ -215,7 +215,7 @@ library StatControllerLib {
       return (heroAttributes(s, info.heroToken, info.heroTokenId), 0);
     }
 
-    IItemController ic = IItemController(c.itemController());
+    IItemController ic = IItemController(controller.itemController());
 
     int32[] memory buffAttributes = new int32[](uint(IStatController.ATTRIBUTES.END_SLOT));
     address[] memory usedTokens = new address[](length);
@@ -234,7 +234,6 @@ library StatControllerLib {
         continue;
       }
 
-
       manaSum += int32(ic.itemMeta(info.buffTokens[i]).manaCost);
       (int32[] memory values, uint8[] memory ids) = ic.casterAttributes(info.buffTokens[i], info.buffTokenIds[i]);
       StatLib.attributesAdd(buffAttributes, StatLib.valuesToFullAttributesArray(values, ids));
@@ -248,11 +247,11 @@ library StatControllerLib {
 
     return (
       StatLib.updateCoreDependAttributesInMemory(
-      totalAttributes,
-      buffAttributes,
-      IHeroController(c.heroController()).heroClass(info.heroToken),
-      info.heroLevel
-    ),
+        totalAttributes,
+        buffAttributes,
+        IHeroController(controller.heroController()).heroClass(info.heroToken),
+        info.heroLevel
+      ),
       manaSum
     );
   }
@@ -313,7 +312,7 @@ library StatControllerLib {
     IStatController.MainState storage s = _S();
     bytes32 heroPackedId = PackingLib.packNftId(hero, heroId);
 
-    IHeroController heroController = StatControllerLib.onlyHeroController(controller);
+    IHeroController heroController = onlyHeroController(controller);
     if (_S().heroBusySlots[heroPackedId] != 0) revert IAppErrors.EquippedItemsExist();
 
     uint32 lifeChances = heroStats(s, hero, heroId).lifeChances;
@@ -403,7 +402,7 @@ library StatControllerLib {
     uint heroTokenId,
     uint heroClass
   ) external {
-    IHeroController heroController = StatControllerLib.onlyHeroController(c);
+    IHeroController heroController = onlyHeroController(c);
 
     bytes32 heroPackedId = PackingLib.packNftId(heroToken, heroTokenId);
     uint32[] memory baseStats = _initCoreAndAttributes(s, heroPackedId, heroClass);
@@ -429,7 +428,7 @@ library StatControllerLib {
     address heroToken,
     uint heroTokenId
   ) external {
-    StatControllerLib.onlyDeployer(c);
+    onlyDeployer(c);
     _removeAllHeroCustomData(IHeroController(c.heroController()), heroToken, heroTokenId);
     _initNewHeroCustomData(s, IHeroController(c.heroController()), heroToken, heroTokenId);
   }
@@ -505,8 +504,8 @@ library StatControllerLib {
     uint itemTokenId,
     bool equip
   ) internal {
-    StatControllerLib.onlyItemController(controller);
-    if (!StatControllerLib.isItemTypeEligibleToItemSlot(itemType, itemSlot)) revert IAppErrors.ErrorItemNotEligibleForTheSlot(itemType, itemSlot);
+    onlyItemController(controller);
+    if (!isItemTypeEligibleToItemSlot(itemType, itemSlot)) revert IAppErrors.ErrorItemNotEligibleForTheSlot(itemType, itemSlot);
 
     // if we are going to take an item by two hands, we need both hands free.
     // if we are going to use only one hand, we shouldn't keep anything by two hands
@@ -548,7 +547,7 @@ library StatControllerLib {
     IStatController.ChangeableStats memory change,
     bool increase
   ) internal {
-    StatControllerLib.onlyRegisteredContract(c);
+    onlyRegisteredContract(c);
 
     bytes32 heroPackedId = PackingLib.packNftId(heroToken, heroTokenId);
     IStatController.ChangeableStats memory currentStats = heroStats(s, heroToken, heroTokenId);
@@ -590,7 +589,7 @@ library StatControllerLib {
     uint heroTokenId,
     address item
   ) internal {
-    StatControllerLib.onlyRegisteredContract(c);
+    onlyRegisteredContract(c);
 
     if (!s.usedConsumables[PackingLib.packNftId(heroToken, heroTokenId)].add(item)) revert IAppErrors.ErrorConsumableItemIsUsed(item);
     emit IApplicationEvents.ConsumableUsed(heroToken, heroTokenId, item);
@@ -603,7 +602,7 @@ library StatControllerLib {
     address heroToken,
     uint heroTokenId
   ) internal {
-    StatControllerLib.onlyRegisteredContract(c);
+    onlyRegisteredContract(c);
 
     EnumerableSet.AddressSet storage items = s.usedConsumables[PackingLib.packNftId(heroToken, heroTokenId)];
 
@@ -624,7 +623,7 @@ library StatControllerLib {
     IController c,
     IStatController.ChangeAttributesInfo memory info
   ) internal {
-    StatControllerLib.onlyRegisteredContract(c);
+    IHeroController heroController = onlyRegisteredContract(c);
     bytes32 heroPackedId = PackingLib.packNftId(info.heroToken, info.heroTokenId);
 
     IStatController.ChangeableStats memory stats = heroStats(s, info.heroToken, info.heroTokenId);
@@ -656,7 +655,7 @@ library StatControllerLib {
       }
     }
 
-    _updateCoreDependAttributes(c, totalAttributes, bonusMain, bonusExtra, stats, info.heroToken, cachedTotalAttrChanged, info.changeAttributes);
+    _updateCoreDependAttributes(heroController.heroClass(info.heroToken), totalAttributes, bonusMain, bonusExtra, stats, cachedTotalAttrChanged, info.changeAttributes);
     _compareStatsWithAttributes(s, heroPackedId, totalAttributes, stats);
 
     emit IApplicationEvents.BonusAttributesChanged(info.heroToken, info.heroTokenId, info.add, info.temporally, msg.sender);
@@ -698,7 +697,7 @@ library StatControllerLib {
     address heroToken,
     uint heroTokenId
   ) internal {
-    StatControllerLib.onlyRegisteredContract(c);
+    IHeroController heroController = onlyRegisteredContract(c);
     bytes32 heroPackedId = PackingLib.packNftId(heroToken, heroTokenId);
 
     bytes32[] memory tmpBonuses = s.heroTemporallyAttributes[heroPackedId];
@@ -721,7 +720,7 @@ library StatControllerLib {
 
     bytes32[] storage tmpBonusesStorage = s.heroTemporallyAttributes[heroPackedId];
 
-    _updateCoreDependAttributes(c, totalAttributes, bonus, tmpBonusesStorage, stats, heroToken, baseValues, tmpBonusesUnpacked);
+    _updateCoreDependAttributes(heroController.heroClass(heroToken), totalAttributes, bonus, tmpBonusesStorage, stats, baseValues, tmpBonusesUnpacked);
     _compareStatsWithAttributes(s, heroPackedId, totalAttributes, stats);
 
     emit IApplicationEvents.TemporallyAttributesCleared(heroToken, heroTokenId, msg.sender);
@@ -729,12 +728,11 @@ library StatControllerLib {
 
   /// @dev Update depend-values for all changed attributes
   function _updateCoreDependAttributes(
-    IController c,
+    uint heroClass,
     bytes32[] storage totalAttributes,
     bytes32[] storage bonusMain,
     bytes32[] storage bonusExtra,
     IStatController.ChangeableStats memory stats,
-    address heroToken,
     int32[] memory baseValues,
     int32[] memory changed
   ) internal {
@@ -743,7 +741,7 @@ library StatControllerLib {
     for (uint i; i < len; ++i) {
       // depend-values should be recalculated if corresponded core value is changed (even if it's equal to 0 now)
       if (changed[i] != 0) {
-        StatLib.updateCoreDependAttributes(c, totalAttributes, bonusMain, bonusExtra, stats, i, heroToken, baseValues[i]);
+        StatLib.updateCoreDependAttributes(totalAttributes, bonusMain, bonusExtra, stats, i, heroClass, baseValues[i]);
       }
     }
   }
@@ -756,7 +754,7 @@ library StatControllerLib {
     uint heroClass,
     IStatController.CoreAttributes memory change
   ) internal returns (uint newLvl) {
-    StatControllerLib.onlyHeroController(c);
+    onlyHeroController(c);
 
     bytes32 heroPackedId = PackingLib.packNftId(heroToken, heroTokenId);
     if (change.strength + change.dexterity + change.vitality + change.energy != LEVEL_UP_SUM) revert IAppErrors.ErrorWrongLevelUpSum();
@@ -785,42 +783,38 @@ library StatControllerLib {
 
       // update
       _addCoreToTotal(
-        c,
+        heroClass,
         totalAttributes,
         bonus,
         bonusTmp,
         currentStats,
-        heroToken,
         change.strength,
         uint(IStatController.ATTRIBUTES.STRENGTH)
       );
       _addCoreToTotal(
-        c,
+        heroClass,
         totalAttributes,
         bonus,
         bonusTmp,
         currentStats,
-        heroToken,
         change.dexterity,
         uint(IStatController.ATTRIBUTES.DEXTERITY)
       );
       _addCoreToTotal(
-        c,
+        heroClass,
         totalAttributes,
         bonus,
         bonusTmp,
         currentStats,
-        heroToken,
         change.vitality,
         uint(IStatController.ATTRIBUTES.VITALITY)
       );
       _addCoreToTotal(
-        c,
+        heroClass,
         totalAttributes,
         bonus,
         bonusTmp,
         currentStats,
-        heroToken,
         change.energy,
         uint(IStatController.ATTRIBUTES.ENERGY)
       );
@@ -854,7 +848,7 @@ library StatControllerLib {
     address heroToken,
     uint heroTokenId,
     int32[] memory prevAttributes
-  ) internal {
+  ) external {
     onlyRegisteredContract(c);
 
     IStatController.ChangeableStats memory currentStats = heroStats(s, heroToken, heroTokenId);
@@ -886,18 +880,17 @@ library StatControllerLib {
   }
 
   function _addCoreToTotal(
-    IController c,
+    uint heroClass,
     bytes32[] storage totalAttributes,
     bytes32[] storage bonus,
     bytes32[] storage bonusTmp,
     IStatController.ChangeableStats memory stats,
-    address heroToken,
     int32 changeValue,
     uint attrIndex
   ) internal {
     if (changeValue != 0) {
       (int32 newValue,) = totalAttributes.changeInt32(attrIndex, int32(uint32(changeValue)));
-      StatLib.updateCoreDependAttributes(c, totalAttributes, bonus, bonusTmp, stats, attrIndex, heroToken, newValue);
+      StatLib.updateCoreDependAttributes(totalAttributes, bonus, bonusTmp, stats, attrIndex, heroClass, newValue);
     }
   }
 
@@ -909,7 +902,7 @@ library StatControllerLib {
     bytes32 index,
     uint value
   ) internal {
-    IHeroController heroController = StatControllerLib.onlyRegisteredContract(c);
+    IHeroController heroController = onlyRegisteredContract(c);
     uint8 ngLevel = heroController.getHeroInfo(token, tokenId).ngLevel;
 
     if (index == KARMA_HASH && value == 0) {
@@ -926,7 +919,7 @@ library StatControllerLib {
     bytes32 index,
     uint value
   ) internal {
-    StatControllerLib.onlyRegisteredContract(c);
+    onlyRegisteredContract(c);
 
     s.globalCustomData[index] = value;
 

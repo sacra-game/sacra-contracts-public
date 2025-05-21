@@ -40,7 +40,7 @@ contract ShelterAuctionController is Controllable, IShelterAuction, ERC2771Conte
   //region ------------------------ Constants
 
   /// @notice Version of the contract
-  string public constant override VERSION = "1.0.0";
+  string public constant override VERSION = "1.0.1";
   //endregion ------------------------ Constants
 
   //region ------------------------ Initializer
@@ -126,7 +126,7 @@ contract ShelterAuctionController is Controllable, IShelterAuction, ERC2771Conte
     return ShelterAuctionLib.auctionEndTs(positionId, ShelterAuctionLib.AUCTION_DURATION);
   }
 
-    //endregion ------------------------ View
+  //endregion ------------------------ View
 
   //region ------------------------ Actions
   /// @notice Seller action. Open new position, setup min allowed auction price.
@@ -137,13 +137,14 @@ contract ShelterAuctionController is Controllable, IShelterAuction, ERC2771Conte
     return ShelterAuctionLib.openPosition(IController(controller()), _msgSender(), shelterId, minAuctionPrice);
   }
 
-  /// @notice Seller action. Close not executed position.
+  /// @notice Seller action. Close position without any bids.
   function closePosition(uint positionId) external {
-    ShelterAuctionLib.closePosition(IController(controller()), _msgSender(), positionId, ShelterAuctionLib.AUCTION_DURATION, block.timestamp);
+    ShelterAuctionLib.closePosition(IController(controller()), _msgSender(), positionId);
   }
 
   /// @notice Buyer action. Create new bid with amount higher than the amount of previously registered bid.
   /// The amount is taken from guild bank to balance of this contract and returned if the bid is closed.
+  /// Close previous auction bid and transfer bid-amount back to the buyer.
   /// @param amount Amount of the bid in terms of the game token. Use {nextAmount} to know min valid value
   function bid(uint positionId, uint amount) external {
     ShelterAuctionLib.bid(IController(controller()), _msgSender(), positionId, amount, ShelterAuctionLib.AUCTION_DURATION, block.timestamp);
@@ -153,12 +154,6 @@ contract ShelterAuctionController is Controllable, IShelterAuction, ERC2771Conte
   /// Transfer winner-bid-amount to the seller. Transfer shelter from seller to the buyer. CLose the position.
   function applyAuctionBid(uint bidId) external {
     ShelterAuctionLib.applyAuctionBid(IController(controller()), _msgSender(), bidId, ShelterAuctionLib.AUCTION_DURATION, block.timestamp);
-  }
-
-  /// @notice Buyer action. Allow to close NOT last bid only.
-  /// Close auction bid and transfer bid-amount back to the buyer.
-  function closeAuctionBid(uint bidId) external {
-    ShelterAuctionLib.closeAuctionBid(IController(controller()), _msgSender(), bidId);
   }
   //endregion ------------------------ Actions
 

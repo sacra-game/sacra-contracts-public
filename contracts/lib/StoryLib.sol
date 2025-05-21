@@ -26,29 +26,76 @@ library StoryLib {
   uint internal constant MAX_MINTED_ITEMS_PER_ITERATION = 3;
   //endregion ------------------------ Constants
 
+  //region ------------------------ Data types
+  struct HandleAnswerResults {
+    IGOC.ActionResult result;
+    uint16 nextPage;
+    uint16[] nextPages;
+  }
+  //endregion ------------------------ Data types
+
+  //region ------------------------ Restrictions
+  function _requireItemOnBalance(
+    ControllerContextLib.ControllerContext memory cc,
+    IStoryController.StoryActionContext memory context,
+    IHeroController.SandboxMode sandboxMode,
+    address item
+  ) internal view {
+    bool found;
+
+    if (sandboxMode != IHeroController.SandboxMode.NORMAL_MODE_0) {
+      found = 0 != ControllerContextLib.itemBoxController(cc).firstActiveItemOfHeroByIndex(context.heroToken, context.heroTokenId, item);
+    }
+
+    if (sandboxMode != IHeroController.SandboxMode.SANDBOX_MODE_1) {
+      found = found || IERC721Enumerable(item).balanceOf(context.sender) != 0;
+    }
+
+    if (! found) revert IAppErrors.NotItem2();
+  }
+
+  //endregion ------------------------ Restrictions
+
   //region ------------------------ Story logic
 
   /// @notice Make action, increment STORY_XXX hero custom data if the dungeon is completed / hero is killed
-  function action(IGOC.ActionContext memory ctx, uint16 storyId) internal returns (IGOC.ActionResult memory result) {
+  function action(ControllerContextLib.ControllerContext memory cc, IGOC.ActionContext memory ctx, uint16 storyId) external returns (
+    IGOC.ActionResult memory result
+  ) {
     if (storyId == 0) revert IAppErrors.ZeroStoryIdAction();
 
-    result = IStoryController(ctx.controller.storyController()).storyAction(
-      ctx.sender,
-      ctx.dungeonId,
-      ctx.objectId,
-      ctx.stageId,
-      ctx.heroToken,
-      ctx.heroTokenId,
-      ctx.biome,
-      ctx.iteration,
-      ctx.data
-    );
+    // -------------------------- make action OR skip the story
+    bool skipStory = StoryLib.isCommandToSkip(ctx.data);
+    if (skipStory) {
+      result = _skipStory(cc, ctx, storyId);
+    } else {
+      result = ControllerContextLib.storyController(cc).storyAction(
+        ctx.sender,
+        ctx.dungeonId,
+        ctx.objectId,
+        ctx.stageId,
+        ctx.heroToken,
+        ctx.heroTokenId,
+        ctx.biome,
+        ctx.iteration,
+        ctx.data
+      );
+    }
 
+    // -------------------------- increment STORY_XXX hero custom data
     if (result.completed || result.kill) {
-      IStatController statController = IStatController(ctx.controller.statController());
       bytes32 index = _getStoryIndex(storyId);
-      uint curValue = statController.heroCustomData(ctx.heroToken, ctx.heroTokenId, index);
-      statController.setHeroCustomData(ctx.heroToken, ctx.heroTokenId, index, curValue + 1);
+      uint curValue = ControllerContextLib.statController(cc).heroCustomData(ctx.heroToken, ctx.heroTokenId, index);
+      ControllerContextLib.statController(cc).setHeroCustomData(ctx.heroToken, ctx.heroTokenId, index, curValue + 1);
+    }
+
+    // -------------------------- Register passed dungeon
+    if (
+      !skipStory
+      && result.completed
+      && ControllerContextLib.heroController(cc).sandboxMode(ctx.heroToken, ctx.heroTokenId) != uint8(IHeroController.SandboxMode.SANDBOX_MODE_1)
+    ) {
+      ControllerContextLib.userController(cc).setStoryPassed(ctx.sender, storyId);
     }
   }
 
@@ -60,10 +107,10 @@ library StoryLib {
     uint16 storyId,
     address heroToken,
     uint heroTokenId,
-    address statController
+    IStatController statController
   ) internal view returns (bool) {
     uint reqLvl = s.storyRequiredLevel[storyId];
-    if (reqLvl != 0 && IStatController(statController).heroStats(heroToken, heroTokenId).level < reqLvl) {
+    if (reqLvl != 0 && statController.heroStats(heroToken, heroTokenId).level < reqLvl) {
       return false;
     }
 
@@ -77,8 +124,8 @@ library StoryLib {
       (uint64 min, uint64 max, bool isHeroData) = data.data.unpackCustomDataRequirements();
 
       uint value = isHeroData
-        ? IStatController(statController).heroCustomData(heroToken, heroTokenId, data.index)
-        : IStatController(statController).globalCustomData(data.index);
+        ? statController.heroCustomData(heroToken, heroTokenId, data.index)
+        : statController.globalCustomData(data.index);
 
       if (value < uint(min) || value > uint(max)) {
         return false;
@@ -92,6 +139,7 @@ library StoryLib {
   /// @param mintItemsData Source for _mintRandomItems, random item (max 1, probably 0) is selected and put to results
   /// @param mintItems_ Function _mintRandomItems is passed here. Parameter is required to make unit tests.
   function handleResult(
+    ControllerContextLib.ControllerContext memory cc,
     IStoryController.StoryActionContext memory context,
     bytes32[] memory attributesChanges,
     bytes32 statsChanges,
@@ -105,7 +153,7 @@ library StoryLib {
     int32[] memory attributes = _generateAttributes(attributesChanges);
 
     if (attributes.length != 0) {
-      context.statController.changeBonusAttributes(IStatController.ChangeAttributesInfo({
+      ControllerContextLib.statController(cc).changeBonusAttributes(IStatController.ChangeAttributesInfo({
         heroToken: context.heroToken,
         heroTokenId: context.heroTokenId,
         changeAttributes: attributes,
@@ -113,7 +161,7 @@ library StoryLib {
         temporally: true
       }));
       // changeBonusAttributes can change life and mana, so we need to refresh hero stats. It's safer to do it always
-      context.heroStats = context.statController.heroStats(context.heroToken, context.heroTokenId);
+      context.heroStats = ControllerContextLib.statController(cc).heroStats(context.heroToken, context.heroTokenId);
       emit IApplicationEvents.StoryChangeAttributes(
         context.objectId,
         context.heroToken,
@@ -129,18 +177,15 @@ library StoryLib {
     IStoryController.StatsChange memory statsToChange = _generateStats(statsChanges);
 
     if (statsToChange.heal != 0) {
-      int32 max = context.statController.heroAttribute(context.heroToken, context.heroTokenId, uint(IStatController.ATTRIBUTES.LIFE));
-      result.heal = max * statsToChange.heal / 100;
+      result.heal = _getPartOfMax(cc, context, IStatController.ATTRIBUTES.LIFE, statsToChange.heal);
     }
 
     if (statsToChange.manaRegen != 0) {
-      int32 max = context.statController.heroAttribute(context.heroToken, context.heroTokenId, uint(IStatController.ATTRIBUTES.MANA));
-      result.manaRegen = max * statsToChange.manaRegen / 100;
+      result.manaRegen = _getPartOfMax(cc, context, IStatController.ATTRIBUTES.MANA, statsToChange.manaRegen);
     }
 
     if (statsToChange.damage != 0) {
-      int32 max = context.statController.heroAttribute(context.heroToken, context.heroTokenId, uint(IStatController.ATTRIBUTES.LIFE));
-      result.damage = max * statsToChange.damage / 100;
+      result.damage = _getPartOfMax(cc, context, IStatController.ATTRIBUTES.LIFE, statsToChange.damage);
 
       if (int32(context.heroStats.life) <= result.damage) {
         result.kill = true;
@@ -148,8 +193,7 @@ library StoryLib {
     }
 
     if (statsToChange.manaConsumed != 0) {
-      int32 max = context.statController.heroAttribute(context.heroToken, context.heroTokenId, uint(IStatController.ATTRIBUTES.MANA));
-      result.manaConsumed = CalcLib.minI32(max * statsToChange.manaConsumed / 100, int32(context.heroStats.mana));
+      result.manaConsumed = CalcLib.minI32(_getPartOfMax(cc, context, IStatController.ATTRIBUTES.MANA, statsToChange.manaConsumed), int32(context.heroStats.mana));
     }
 
     result.experience = statsToChange.experience;
@@ -157,24 +201,42 @@ library StoryLib {
 
     if (mintItemsData.length != 0) {
       result.mintItems = mintItems_(context, mintItemsData);
+      // set MF the same for all items
+      result.mintItemsMF = new uint32[](result.mintItems.length);
+      uint32 mf = uint32(ControllerContextLib.statController(cc).heroAttribute(context.heroToken, context.heroTokenId, uint(IStatController.ATTRIBUTES.MAGIC_FIND)));
+      for(uint i; i < result.mintItems.length; ++i) {
+        result.mintItemsMF[i] = mf;
+      }
     }
     return result;
   }
 
+  function _getPartOfMax(
+    ControllerContextLib.ControllerContext memory cc,
+    IStoryController.StoryActionContext memory context,
+    IStatController.ATTRIBUTES attribute,
+    int32 value
+  ) internal view returns (int32) {
+    int32 max = ControllerContextLib.statController(cc).heroAttribute(context.heroToken, context.heroTokenId, uint(attribute));
+    return max * value / 100;
+  }
+
   /// @notice Put data from {heroCustomDatas} and {globalCustomDatas} to {statController}
   function handleCustomDataResult(
+    ControllerContextLib.ControllerContext memory cc,
     IStoryController.StoryActionContext memory context,
     bytes32[] memory heroCustomDatas,
     bytes32[] memory globalCustomDatas
   ) internal {
+    IStatController statController = ControllerContextLib.statController(cc);
     uint len = heroCustomDatas.length;
     for (uint i; i < len; ++i) {
 
       (bytes32 customDataIndex, int16 value) = heroCustomDatas[i].unpackCustomDataChange();
 
       if (customDataIndex != 0) {
-        uint curValue = context.statController.heroCustomData(context.heroToken, context.heroTokenId, customDataIndex);
-        context.statController.setHeroCustomData(
+        uint curValue = statController.heroCustomData(context.heroToken, context.heroTokenId, customDataIndex);
+        statController.setHeroCustomData(
           context.heroToken,
           context.heroTokenId,
           customDataIndex,
@@ -193,8 +255,8 @@ library StoryLib {
       (bytes32 customDataIndex, int16 value) = globalCustomDatas[i].unpackCustomDataChange();
 
       if (customDataIndex != 0) {
-        uint curValue = context.statController.globalCustomData(customDataIndex);
-        context.statController.setGlobalCustomData(
+        uint curValue = statController.globalCustomData(customDataIndex);
+        statController.setGlobalCustomData(
           customDataIndex,
           value == 0
             ? 0
@@ -207,7 +269,11 @@ library StoryLib {
   }
 
   /// @notice SIP-003: Randomly select one or several items, break them and increase their fragility by 1%.
-  function breakItem(IStoryController.StoryActionContext memory context, IStoryController.MainState storage s) internal {
+  function breakItem(
+    ControllerContextLib.ControllerContext memory cc,
+    IStoryController.StoryActionContext memory context,
+    IStoryController.MainState storage s
+  ) internal {
     bytes32[] storage breakInfos = s.burnItem[context.answerIdHash];
     uint length = breakInfos.length;
 
@@ -220,17 +286,16 @@ library StoryLib {
 
       for (uint k = 0; k < countSlots; ++k) {
         if (chance != 0 && context.oracle.getRandomNumberInRange(0, 100, 0) <= uint(chance)) {
-          uint8[] memory busySlots = context.statController.heroItemSlots(context.heroToken, context.heroTokenId);
+          uint8[] memory busySlots = ControllerContextLib.statController(cc).heroItemSlots(context.heroToken, context.heroTokenId);
 
-          uint lenBusySlots = busySlots.length;
-          if (lenBusySlots != 0) {
+          if (busySlots.length != 0) {
             uint busySlotIndex;
             bool itemExist;
             if (slot == 0) {
-              busySlotIndex = context.oracle.getRandomNumberInRange(0, lenBusySlots - 1, 0);
+              busySlotIndex = context.oracle.getRandomNumberInRange(0, busySlots.length - 1, 0);
               itemExist = true;
             } else {
-              for (uint j; j < lenBusySlots; ++j) {
+              for (uint j; j < busySlots.length; ++j) {
                 if (busySlots[j] == slots[k]) {
                   busySlotIndex = j;
                   itemExist = true;
@@ -241,7 +306,7 @@ library StoryLib {
 
             if (itemExist) {
               // SIP-003: don't burn item but break it
-              _breakItemInHeroSlot(context, busySlots[busySlotIndex]);
+              _breakItemInHeroSlot(cc, context, busySlots[busySlotIndex]);
               if (stopIfBroken) {
                 return; // go out of two cycles
               }
@@ -298,33 +363,34 @@ library StoryLib {
     uint16 nextPage,
     uint16[] memory nextPages
   ) {
-    return _handleAnswer(answerResultId, s, context, _mintRandomItems);
+    ControllerContextLib.ControllerContext memory cc = ControllerContextLib.init(context.controller);
+    HandleAnswerResults memory ret = _handleAnswer(cc, answerResultId, s, context, _mintRandomItems);
+    return (ret.result, ret.nextPage, ret.nextPages);
   }
 
   /// @notice Update internal hero state, generate {result}
   /// @param context We update some fields in place, so memory, not calldata here
   /// @param mintItems_ Function _mintRandomItems is passed here. Parameter is required to make unit tests.
   function _handleAnswer(
+    ControllerContextLib.ControllerContext memory cc,
     IStoryController.AnswerResultId answerResultId,
     IStoryController.MainState storage s,
     IStoryController.StoryActionContext memory context,
     function (IStoryController.StoryActionContext memory, bytes32[] memory) internal returns (address[] memory) mintItems_
   ) internal returns (
-    IGOC.ActionResult memory result,
-    uint16 nextPage,
-    uint16[] memory nextPages
+    HandleAnswerResults memory dest
   ) {
-    result.objectId = context.objectId;
-    result.heroTokenId = context.heroTokenId;
-    result.heroToken = context.heroToken;
+    dest.result.objectId = context.objectId;
+    dest.result.heroTokenId = context.heroTokenId;
+    dest.result.heroToken = context.heroToken;
 
-    nextPages = s.nextPageIds[context.storyId.packStoryNextPagesId(
+    dest.nextPages = s.nextPageIds[context.storyId.packStoryNextPagesId(
       context.pageId,
       context.heroClassFromAnswerHash,
       context.answerNumber,
       uint8(answerResultId)
     )];
-    nextPage = _getNextPage(context.oracle, nextPages);
+    dest.nextPage = _getNextPage(context.oracle, dest.nextPages);
 
     // number of items that can be minted inside single iteration in the story is limited
     // if the max is reached the minting is silently skipped
@@ -332,7 +398,8 @@ library StoryLib {
     uint mintedInIteration = _getMintedInIteration(s, context);
 
     if (answerResultId == IStoryController.AnswerResultId.SUCCESS) {
-      result = handleResult(
+      dest.result = handleResult(
+        cc,
         context,
         s.successInfoAttributes[context.answerIdHash],
         s.successInfoStats[context.answerIdHash],
@@ -341,6 +408,7 @@ library StoryLib {
       );
 
       handleCustomDataResult(
+        cc,
         context,
         s.customDataResult[context.storyId.packStoryCustomDataResult(
           context.pageId,
@@ -356,7 +424,8 @@ library StoryLib {
         )]
       );
     } else {
-      result = handleResult(
+      dest.result = handleResult(
+        cc,
         context,
         s.failInfoAttributes[context.answerIdHash],
         s.failInfoStats[context.answerIdHash],
@@ -365,6 +434,7 @@ library StoryLib {
       );
 
       handleCustomDataResult(
+        cc,
         context,
         s.customDataResult[context.storyId.packStoryCustomDataResult(
           context.pageId,
@@ -381,9 +451,11 @@ library StoryLib {
       );
     }
 
-    if (result.mintItems.length != 0) {
-      _setMintedInIteration(s, context, mintedInIteration + result.mintItems.length);
+    if (dest.result.mintItems.length != 0) {
+      _setMintedInIteration(s, context, mintedInIteration + dest.result.mintItems.length);
     }
+
+    return dest;
   }
 
   /// @notice Check if the user has already minted an item within the current iteration of the story.
@@ -424,6 +496,29 @@ library StoryLib {
     return s.nextObjectsRewrite[ctx.storyId.packStoryPageId(ctx.pageId, 0)];
   }
 
+  // @notice Skip the story instead of passing it, SCR-1248
+  // @dev The story can be skipped if it's allowed to be skipped and it has been already passed by the user.
+  function _skipStory(
+    ControllerContextLib.ControllerContext memory cc,
+    IGOC.ActionContext memory ctx,
+    uint16 storyId
+  ) internal returns (
+    IGOC.ActionResult memory results
+  ) {
+    IStoryController storyController = ControllerContextLib.storyController(cc);
+
+    if (!storyController.skippableStory(storyId)) revert IAppErrors.NotSkippableStory();
+    if (storyController.heroPage(ctx.heroToken, uint80(ctx.heroTokenId), storyId) != 0) revert IAppErrors.SkippingNotAllowed();
+
+    ControllerContextLib.userController(cc).useGamePointsToSkipStore(ctx.sender, storyId);
+
+    results.objectId = ctx.objectId;
+    results.heroTokenId = ctx.heroTokenId;
+    results.heroToken = ctx.heroToken;
+    results.completed = true;
+
+    return results;
+  }
   //endregion ------------------------ Story logic
 
   //region ------------------------ Internal utils for story logic
@@ -448,8 +543,7 @@ library StoryLib {
       magicFind: 0,
       destroyItems: 0,
       maxItems: 1, // MINT ONLY 1 ITEM!
-      mintDropChanceDelta: StatLib.mintDropChanceDelta(context.heroStats.experience, uint8(context.heroStats.level), context.biome),
-      mintDropChanceNgLevelMultiplier: 1e18
+      mintDropChanceDelta: StatLib.mintDropChanceDelta(context.heroStats.experience, uint8(context.heroStats.level), context.biome)
     }));
   }
 
@@ -461,8 +555,7 @@ library StoryLib {
       if (len != 0) {
         attributes = new int32[](uint(IStatController.ATTRIBUTES.END_SLOT));
         for (uint i; i < len; ++i) {
-          int32 value = values[i];
-          attributes[ids[i]] = value;
+          attributes[ids[i]] = values[i];
         }
       }
     }
@@ -485,11 +578,11 @@ library StoryLib {
 
   /// @notice Break the item from the given {slot} (i.e. reduce item's durability to 0) and take it off
   /// Broken item is taken off also.
-  function _breakItemInHeroSlot(IStoryController.StoryActionContext memory ctx, uint8 slot) internal {
-    (address itemAdr, uint itemId) = ctx.statController.heroItemSlot(ctx.heroToken, uint64(ctx.heroTokenId), slot).unpackNftId();
+  function _breakItemInHeroSlot(ControllerContextLib.ControllerContext memory cc, IStoryController.StoryActionContext memory ctx, uint8 slot) internal {
+    (address itemAdr, uint itemId) = ControllerContextLib.statController(cc).heroItemSlot(ctx.heroToken, uint64(ctx.heroTokenId), slot).unpackNftId();
 
     // take off the broken item and mark it as broken
-    ctx.itemController.takeOffDirectly(itemAdr, itemId, ctx.heroToken, ctx.heroTokenId, slot, ctx.sender, true);
+    ControllerContextLib.itemController(cc).takeOffDirectly(itemAdr, itemId, ctx.heroToken, ctx.heroTokenId, slot, ctx.sender, true);
 
     // add 1% of fragility, deprecated
     // ctx.itemController.incBrokenItemFragility(itemAdr, itemId);
@@ -527,9 +620,10 @@ library StoryLib {
     IStoryController.StoryActionContext memory context,
     IStoryController.MainState storage s
   ) external returns (IStoryController.AnswerResultId result) {
-    result = checkAnswerAttributes(context, context.answerIdHash, s);
+    ControllerContextLib.ControllerContext memory cc = ControllerContextLib.init(context.controller);
+    result = checkAnswerAttributes(cc, context, context.answerIdHash, s);
     if (result == IStoryController.AnswerResultId.SUCCESS) {
-      result = checkAnswerItems(context, context.answerIdHash, s);
+      result = checkAnswerItems(cc, context, context.answerIdHash, s);
     }
     if (result == IStoryController.AnswerResultId.SUCCESS) {
       result = checkAnswerTokens(context, context.answerIdHash, s);
@@ -538,10 +632,10 @@ library StoryLib {
       result = checkAnswerDelay(context);
     }
     if (result == IStoryController.AnswerResultId.SUCCESS) {
-      result = checkAnswerHeroCustomData(context, context.answerIdHash, s);
+      result = checkAnswerHeroCustomData(cc, context, context.answerIdHash, s);
     }
     if (result == IStoryController.AnswerResultId.SUCCESS) {
-      result = checkAnswerGlobalCustomData(context, context.answerIdHash, s);
+      result = checkAnswerGlobalCustomData(cc, context, context.answerIdHash, s);
     }
     if (result == IStoryController.AnswerResultId.SUCCESS) {
       result = checkAnswerRandom(context);
@@ -550,17 +644,19 @@ library StoryLib {
 
   /// @notice Check if hero attribute values meet attribute requirements for the given answer
   function checkAnswerAttributes(
+    ControllerContextLib.ControllerContext memory cc,
     IStoryController.StoryActionContext memory context,
     bytes32 answerIndex,
     IStoryController.MainState storage s
   ) internal view returns (IStoryController.AnswerResultId) {
+    IStatController statController = ControllerContextLib.statController(cc);
     bytes32[] storage reqs = s.attributeRequirements[answerIndex];
     uint length = reqs.length;
 
     for (uint i; i < length; ++i) {
       (uint8 attributeIndex, int32 value, bool isCore) = reqs[i].unpackStoryAttributeRequirement();
       if (isCore) {
-        IStatController.CoreAttributes memory base = context.statController.heroBaseAttributes(context.heroToken, context.heroTokenId);
+        IStatController.CoreAttributes memory base = statController.heroBaseAttributes(context.heroToken, context.heroTokenId);
         if (attributeIndex == uint8(IStatController.ATTRIBUTES.STRENGTH) && base.strength < value) {
           return IStoryController.AnswerResultId.ATTRIBUTE_FAIL;
         }
@@ -574,7 +670,7 @@ library StoryLib {
           return IStoryController.AnswerResultId.ATTRIBUTE_FAIL;
         }
       } else {
-        int32 attr = context.statController.heroAttribute(context.heroToken, context.heroTokenId, attributeIndex);
+        int32 attr = statController.heroAttribute(context.heroToken, context.heroTokenId, attributeIndex);
         if (attr < value) {
           return IStoryController.AnswerResultId.ATTRIBUTE_FAIL;
         }
@@ -588,11 +684,14 @@ library StoryLib {
   /// 1) For equipped item: check if it is on balance
   /// 2) For not equipped item: burn first owned item if requireItemBurn OR check that not equipped item is on balance
   function checkAnswerItems(
+    ControllerContextLib.ControllerContext memory cc,
     IStoryController.StoryActionContext memory context,
     bytes32 answerIndex,
     IStoryController.MainState storage s
   ) internal returns (IStoryController.AnswerResultId) {
-
+    IHeroController.SandboxMode sandboxMode = IHeroController.SandboxMode(
+      ControllerContextLib.heroController(cc).sandboxMode(context.heroToken, context.heroTokenId)
+    );
     bytes32[] storage reqs = s.itemRequirements[answerIndex];
     uint length = reqs.length;
 
@@ -605,33 +704,15 @@ library StoryLib {
       }
 
       if (requireItemBurn) {
-        _burnFirstOwnedItem(context, item);
+        _burnFirstOwnedItem(cc, context, sandboxMode, item);
       }
 
       if (!requireItemEquipped && !requireItemBurn) {
-        if (IERC721Enumerable(item).balanceOf(context.sender) == 0) revert IAppErrors.NotItem2();
+        _requireItemOnBalance(cc, context, sandboxMode, item);
       }
 
     }
     return IStoryController.AnswerResultId.SUCCESS;
-  }
-
-  /// @notice burn first owned item and generate event
-  /// @dev Use separate function to workaround stack too deep
-  function _burnFirstOwnedItem(IStoryController.StoryActionContext memory context, address item) internal {
-    uint itemId = IERC721Enumerable(item).tokenOfOwnerByIndex(context.sender, 0);
-    context.itemController.destroy(item, itemId); // destroy reverts if the item is equipped
-
-    emit IApplicationEvents.NotEquippedItemBurned(
-      context.heroToken,
-      context.heroTokenId,
-      context.dungeonId,
-      context.storyId,
-      item,
-      itemId,
-      context.stageId,
-      context.iteration
-    );
   }
 
   /// @notice Ensure that the sender has enough amounts of the required tokens, send fees to the treasury
@@ -651,15 +732,12 @@ library StoryLib {
         if (balance < uint(amount)) revert IAppErrors.NotEnoughAmount(balance, uint(amount));
 
         if (requireTransfer) {
+          // the tokens are required even in the sandbox mode
           context.controller.process(token, amount, context.sender);
         }
       }
     }
     return IStoryController.AnswerResultId.SUCCESS;
-  }
-
-  function adjustTokenAmountToGameToken(uint amount, IController controller) internal view returns(uint) {
-    return amount * controller.gameTokenPrice() / 1e18;
   }
 
   /// @notice Generate error randomly
@@ -693,22 +771,73 @@ library StoryLib {
   }
 
   function checkAnswerHeroCustomData(
+    ControllerContextLib.ControllerContext memory cc,
     IStoryController.StoryActionContext memory context,
     bytes32 answerIndex,
     IStoryController.MainState storage s
   ) internal view returns (IStoryController.AnswerResultId) {
-    return _checkAnswerCustomData(context, s.heroCustomDataRequirement[answerIndex], true);
+    return _checkAnswerCustomData(cc, context, s.heroCustomDataRequirement[answerIndex], true);
   }
 
   function checkAnswerGlobalCustomData(
+    ControllerContextLib.ControllerContext memory cc,
     IStoryController.StoryActionContext memory context,
     bytes32 answerIndex,
     IStoryController.MainState storage s
   ) internal view returns (IStoryController.AnswerResultId) {
-    return _checkAnswerCustomData(context, s.globalCustomDataRequirement[answerIndex], false);
+    return _checkAnswerCustomData(cc, context, s.globalCustomDataRequirement[answerIndex], false);
+  }
+
+  //endregion ------------------------ Check answers
+
+  //region ------------------------ Check answers internal logic
+  /// @notice burn first owned item and generate event
+  /// @dev Use separate function to workaround stack too deep
+  function _burnFirstOwnedItem(
+    ControllerContextLib.ControllerContext memory cc,
+    IStoryController.StoryActionContext memory context,
+    IHeroController.SandboxMode sandboxMode,
+    address item
+  ) internal {
+    uint itemId = _gitFirstOwnedItem(cc, context, sandboxMode, item);
+    if (itemId == 0) revert IAppErrors.ItemNotFound(item, itemId);
+    ControllerContextLib.itemController(cc).destroy(item, itemId); // destroy reverts if the item is equipped
+
+    emit IApplicationEvents.NotEquippedItemBurned(
+      context.heroToken,
+      context.heroTokenId,
+      context.dungeonId,
+      context.storyId,
+      item,
+      itemId,
+      context.stageId,
+      context.iteration
+    );
+  }
+
+  function _gitFirstOwnedItem(
+    ControllerContextLib.ControllerContext memory cc,
+    IStoryController.StoryActionContext memory context,
+    IHeroController.SandboxMode sandboxMode,
+    address item
+  ) internal view returns (uint itemId) {
+    if (sandboxMode != IHeroController.SandboxMode.NORMAL_MODE_0) {
+      itemId = ControllerContextLib.itemBoxController(cc).firstActiveItemOfHeroByIndex(context.heroToken, context.heroTokenId, item);
+    }
+
+    if (sandboxMode != IHeroController.SandboxMode.SANDBOX_MODE_1 && itemId == 0) {
+      itemId = IERC721Enumerable(item).tokenOfOwnerByIndex(context.sender, 0);
+    }
+
+    return itemId;
+  }
+
+  function adjustTokenAmountToGameToken(uint amount, IController controller) internal view returns(uint) {
+    return amount * controller.gameTokenPrice() / 1e18;
   }
 
   function _checkAnswerCustomData(
+    ControllerContextLib.ControllerContext memory cc,
     IStoryController.StoryActionContext memory context,
     IStoryController.CustomDataRequirementPacked[] memory datas,
     bool heroCustomData
@@ -720,8 +849,8 @@ library StoryLib {
       if (data.index != 0) {
         (uint valueMin, uint valueMax, bool mandatory) = data.data.unpackCustomDataRequirements();
         uint heroValue = heroCustomData
-          ? context.statController.heroCustomData(context.heroToken, context.heroTokenId, data.index)
-          : context.statController.globalCustomData(data.index);
+          ? ControllerContextLib.statController(cc).heroCustomData(context.heroToken, context.heroTokenId, data.index)
+          : ControllerContextLib.statController(cc).globalCustomData(data.index);
 
         if (heroValue < valueMin || heroValue > valueMax) {
           if (mandatory) {
@@ -741,6 +870,24 @@ library StoryLib {
 
     return IStoryController.AnswerResultId.SUCCESS;
   }
+  //endregion ------------------------ Check answers internal logic
 
-  //endregion ------------------------ Check answers
+  //region ------------------------ Utils
+
+  /// @notice True if the data contains string "SKIP"
+  function isCommandToSkip(bytes memory data) internal pure returns (bool) {
+    // ordinal answer contains 1 byte, see {_decodeAnswerId}
+    // string-command contains 3 bytes (offset, string length, string body)
+    if (data.length != 32 * 3) return false;
+
+    bytes32 size;
+    bytes32 content;
+    assembly {
+      size := mload(add(data, 64))
+      content := mload(add(data, 96))
+    }
+
+    return uint(size) == 4 && content == bytes32(bytes("SKIP"));
+  }
+  //endregion ------------------------ Utils
 }

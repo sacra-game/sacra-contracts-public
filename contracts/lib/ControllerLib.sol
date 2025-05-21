@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.23;
 
-import "../interfaces/IERC20.sol";
 import "../interfaces/IAppErrors.sol";
 import "../interfaces/IApplicationEvents.sol";
-import "../interfaces/IProxyControlled.sol";
+import "../interfaces/IERC20.sol";
 import "../interfaces/IGameToken.sol";
+import "../interfaces/IProxyControlled.sol";
+import "../interfaces/IXmyrdGauge.sol";
 import "../openzeppelin/Math.sol";
+import "./AppLib.sol";
 
 library ControllerLib {
   //region ------------------------ Constants
@@ -55,6 +57,12 @@ library ControllerLib {
     uint gameTokenPrice;
 
     address rewardsPool;
+
+    address pvpController;
+
+    address itemBoxController;
+
+    address gaugeXMyrd;
   }
   //endregion ------------------------ Data types
 
@@ -131,12 +139,20 @@ library ControllerLib {
   function userController() internal view returns (address) {return _S().userController;}
   function guildController() internal view returns (address) {return _S().guildController;}
 
+  function pvpController() internal view returns (address) {return _S().pvpController;}
+
+  function itemBoxController() internal view returns (address) {return _S().itemBoxController;}
+
   function gameTokenPrice() internal view returns (uint p) {
     p = _S().gameTokenPrice;
     if (p == 0) {
       p = DEFAULT_TOKEN_PRICE;
     }
     return p;
+  }
+
+  function gauge() internal view returns (address) {
+    return _S().gaugeXMyrd;
   }
   //endregion ------------------------ Views
 
@@ -253,6 +269,13 @@ library ControllerLib {
     emit IApplicationEvents.GuildControllerChanged(value);
   }
 
+  function setPvpController(address value) internal {
+    onlyGovernance();
+    if (value == address(0)) revert IAppErrors.ZeroAddress();
+    _S().pvpController = value;
+    emit IApplicationEvents.PvpControllerChanged(value);
+  }
+
   function setRewardsPool(address value) internal {
     onlyGovernance();
     if (value == address(0)) revert IAppErrors.ZeroAddress();
@@ -265,6 +288,23 @@ library ControllerLib {
     if (value == 0) revert IAppErrors.ZeroAmount();
     _S().gameTokenPrice = value;
     emit IApplicationEvents.GameTokenPriceChanged(value);
+  }
+
+  function setItemBoxController(address value) internal {
+    onlyGovernance();
+    if (value == address(0)) revert IAppErrors.ZeroAddress();
+    _S().itemBoxController = value;
+    emit IApplicationEvents.ItemBoxControllerChanged(value);
+  }
+
+  function setGauge(address value) internal {
+    onlyGovernance();
+
+    // zero values are allowed
+
+    _S().gaugeXMyrd = value;
+
+    emit IApplicationEvents.GaugeChanged(value);
   }
   //endregion ------------------------ Gov actions - setters
 
@@ -311,7 +351,8 @@ library ControllerLib {
       IGameToken(token).burn(toBurn);
     }
 
-    // keep rest of the amount on balance of the controller (toGov)
+    // send all available token balance to XMyrd gauge
+    _sendTokensToGauge(token);
 
     emit IApplicationEvents.Process(token, amount, from, toBurn, toTreasury, toGov);
   }
@@ -353,6 +394,48 @@ library ControllerLib {
   //region ------------------------  Internal logic
   function _isGovernance(address _value) internal view returns (bool) {
     return IController(address(this)).governance() == _value;
+  }
+
+  /// @notice Send all available amount of the token to xMyrd gauge and call updatePeriod to rebase
+  function _sendTokensToGauge(address token) internal {
+    IXMyrdGauge _gauge = IXMyrdGauge(_S().gaugeXMyrd);
+    if (address(_gauge) != address(0)) {
+      address myrd = _gauge.defaultRewardToken();
+      if (token == myrd) {
+        // --------------- special logic for MYRD: send rewards through updatePeriod(amount)
+        // todo fix left value calculation
+        if (_gauge.activePeriod() < _gauge.getPeriod()) {
+          uint balance = IERC20(token).balanceOf(address(this));
+          if (balance != 0) {
+            AppLib.approveIfNeeded(token, balance, address(_gauge));
+          }
+          // we should update period even with zero balance to call rebase
+          try _gauge.updatePeriod(balance) {
+            emit IApplicationEvents.UpdatePeriod(balance);
+          } catch {}
+        }
+      } else {
+        // --------------- any other tokens except MYRD: use notifyRewardAmount(amount) + updatePeriod(0)
+        uint balance = IERC20(token).balanceOf(address(this));
+        if (balance > _gauge.left(_gauge.xMyrd(), token) && balance / 7 days > 0) {
+          AppLib.approveIfNeeded(token, balance, address(_gauge));
+          try _gauge.notifyRewardAmount(token, balance) {
+            emit IApplicationEvents.NotifyRewardAmount(token, balance);
+          } catch {}
+        } else {
+          // keep tokens on balance of the controller
+          // zero-balance case is also here
+        }
+
+        // call updatePeriod if it's allowed
+        // todo fix left value calculation
+        if (_gauge.activePeriod() < _gauge.getPeriod()) {
+          try _gauge.updatePeriod(0) {
+            emit IApplicationEvents.UpdatePeriod(0);
+          } catch {}
+        }
+      }
+    }
   }
   //endregion ------------------------  Internal logic
 }

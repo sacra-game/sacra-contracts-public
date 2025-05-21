@@ -142,6 +142,10 @@ contract DungeonFactory is Controllable, IDungeonFactory, ERC2771Context, ERC721
   function maxAvailableBiome() external view returns (uint8) {
     return DungeonFactoryLib.maxAvailableBiome();
   }
+
+  function dungeonNgLevel(uint64 dungeonId) external view returns (uint) {
+    return DungeonFactoryLib.dungeonNgLevel(dungeonId);
+  }
   //endregion ------------------------ VIEWS
 
   //region ------------------------ ACTIONS
@@ -158,10 +162,6 @@ contract DungeonFactory is Controllable, IDungeonFactory, ERC2771Context, ERC721
     DungeonFactoryLib.setBossCompleted(IController(controller()), objectId, heroToken, heroTokenId, heroBiome);
   }
   //endregion ------------------------ ACTIONS
-
-  //////////////////////////////////////////////////////////////////////////////////////
-  //           DUNGEON LOGIC
-  //////////////////////////////////////////////////////////////////////////////////////
 
   //region ------------------------ GOV ACTIONS
 
@@ -220,14 +220,20 @@ contract DungeonFactory is Controllable, IDungeonFactory, ERC2771Context, ERC721
   function exit(uint64 dungId, bool claim) external {
     DungeonFactoryLib.exit(_isNotSmartContract(), IController(controller()), _msgSender(), dungId, claim);
   }
+
+  /// @notice Hero exists current dungeon forcibly. Life chance is reduced, life and mana are restored to default,
+  /// items are kept untouched. It's not allowed to call this function for heroes with last life chance
+  function exitSuicide(address hero, uint heroId) external {
+    DungeonFactoryLib.exitSpecial(IController(controller()), hero, heroId, _msgSender(), DungeonLib.DungeonExitMode.HERO_SUICIDE_2);
+  }
   //endregion ------------------------ USER ACTIONS
 
   //region ------------------------ Contracts actions
 
   /// @notice Hero exists current dungeon forcibly same as when dying but without loosing life chance
   /// @dev Implement logic of special consumable that allows a hero to exit current dungeon using the shelter
-  function exitForcibly(address heroToken, uint heroTokenId, address msgSender) override external {
-    DungeonFactoryLib.exitForcibly(IController(controller()), heroToken, heroTokenId, msgSender);
+  function exitForcibly(address hero, uint heroId, address msgSender) override external {
+    DungeonFactoryLib.exitSpecial(IController(controller()), hero, heroId, msgSender, DungeonLib.DungeonExitMode.FORCED_EXIT_1);
   }
 
   function reborn(address heroToken, uint heroTokenId) external override {

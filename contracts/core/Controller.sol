@@ -118,12 +118,24 @@ contract Controller is Controllable, IController {
     return ControllerLib.guildController();
   }
 
+  function pvpController() external view override returns (address) {
+    return ControllerLib.pvpController();
+  }
+
   function rewardsPool() external view override returns (address) {
     return ControllerLib.rewardsPool();
   }
 
+  function itemBoxController() external view override returns (address) {
+    return ControllerLib.itemBoxController();
+  }
+
   function gameTokenPrice() external view override returns (uint) {
     return ControllerLib.gameTokenPrice();
+  }
+
+  function gauge() external view returns (address) {
+    return ControllerLib.gauge();
   }
   //endregion ------------------------ Views
 
@@ -193,12 +205,24 @@ contract Controller is Controllable, IController {
     ControllerLib.setGuildController(value);
   }
 
+  function setPvpController(address value) external {
+    ControllerLib.setPvpController(value);
+  }
+
   function setRewardsPool(address value) external {
     ControllerLib.setRewardsPool(value);
   }
 
+  function setItemBoxController(address value) external {
+    ControllerLib.setItemBoxController(value);
+  }
+
   function setGameTokenPrice(uint value) external {
     ControllerLib.setGameTokenPrice(value);
+  }
+
+  function setGauge(address value) external {
+    ControllerLib.setGauge(value);
   }
   //endregion ------------------------ Gov actions - setters
 

@@ -88,7 +88,8 @@ contract StoryController is Controllable, IStoryController, ERC721Holder {
   }
 
   function currentHeroAnswers(uint16 storyId, address hero, uint80 heroId) public view returns (bytes32[] memory) {
-    return StoryControllerLib.currentHeroAnswers(IController(controller()), storyId, hero, heroId);
+    ControllerContextLib.ControllerContext memory cc = ControllerContextLib.init(IController(controller()));
+    return StoryControllerLib.currentHeroAnswers(cc, storyId, hero, heroId);
   }
 
   function isStoryAvailableForHero(uint32 objectId, address heroToken, uint heroTokenId) external view override returns (bool) {
@@ -99,6 +100,14 @@ contract StoryController is Controllable, IStoryController, ERC721Holder {
     return StoryLib.adjustTokenAmountToGameToken(amount, IController(controller()));
   }
 
+  function skippableStory(uint16 storyId) external view returns (bool) {
+    return StoryControllerLib.skippableStory(storyId);
+  }
+
+  /// @dev We can remove this function to reduce size contract, deploy script should be fixed
+  function allSkippableStories() external view returns (uint[] memory skippableStoryIds) {
+    return StoryControllerLib.allSkippableStories();
+  }
   //endregion ------------------------ VIEWS
 
   //region ------------------------ SETTERS
@@ -185,6 +194,10 @@ contract StoryController is Controllable, IStoryController, ERC721Holder {
 
   function finalizeStoryRegistration(uint16 storyId, uint32 objectId, uint buildHash) external {
     StoryControllerLib.finalizeStoryRegistration(IController(controller()), storyId, objectId, buildHash);
+  }
+
+  function setSkippableStories(uint16[] memory storyIds_, bool skippable) external {
+    StoryControllerLib.setSkippableStories(IController(controller()), storyIds_, skippable);
   }
   //endregion ------------------------ SETTERS
 

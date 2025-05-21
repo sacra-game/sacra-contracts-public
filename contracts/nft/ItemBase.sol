@@ -40,6 +40,13 @@ contract ItemBase is NftBase, IItem {
     if (itemController != sender) revert IAppErrors.ErrorNotItemController(sender);
   }
 
+  function onlyItemControllerOrItemBox(IController controller, address sender) internal view {
+    if (
+      controller.itemController() != sender
+      && controller.itemBoxController() != sender
+    ) revert IAppErrors.ErrorNotAllowedSender();
+  }
+
   function _beforeTokenTransfer(uint tokenId) internal view override {
     if (
       !IItemController(IController(controller()).itemController()).isAllowedToTransfer(address(this), tokenId)
@@ -89,7 +96,7 @@ contract ItemBase is NftBase, IItem {
 
   /// @dev Some stories can destroy items
   function burn(uint tokenId) external override {
-    onlyItemController(IController(controller()).itemController(), msg.sender);
+    onlyItemControllerOrItemBox(IController(controller()), msg.sender);
 
     _burn(tokenId);
 
@@ -99,7 +106,7 @@ contract ItemBase is NftBase, IItem {
   /// @dev Controller can transfer item from one address to another.
   ///      It must be performed only with properly check requirements.
   function controlledTransfer(address from, address to, uint tokenId) external override {
-    onlyItemController(IController(controller()).itemController(), msg.sender);
+    onlyItemControllerOrItemBox(IController(controller()), msg.sender);
 
     _safeTransfer(from, to, tokenId);
   }

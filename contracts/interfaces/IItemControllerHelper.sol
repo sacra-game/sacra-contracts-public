@@ -14,7 +14,10 @@ interface IItemControllerHelper {
     UNION_KEY_PASS_ITEM_1,
 
     /// @notice Generator of ID for union combinations
-    UNION_ID_COUNTER_2
+    UNION_ID_COUNTER_2,
+
+    /// @notice SCR-1263: protective item for augmentation
+    AUGMENTATION_PROTECTIVE_ITEM_3
   }
 
   /// @custom:storage-location erc7201:item.controller.helper.main
@@ -54,4 +57,6 @@ interface IItemControllerHelper {
   //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
   function prepareToCombine(address user, uint configId, address[] memory items, uint[][] memory tokens) external view returns (address);
+  function getAugmentationProtectiveItem() external view returns (address);
+  function areSkillsAvailableForHero(address[] memory skillTokens, uint[] memory skillTokenIds, address hero, uint heroId) external view returns (bool);
 }

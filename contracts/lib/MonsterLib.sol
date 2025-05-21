@@ -94,7 +94,7 @@ library MonsterLib {
     function(
       IItemController,
       IFightCalculator.FightCall memory,
-      address,
+      IFightCalculator.FightCallAdd memory,
       function (uint) internal view returns (uint)
     ) internal returns (IFightCalculator.FightResult memory) fight_
   ) internal returns (
@@ -187,6 +187,15 @@ library MonsterLib {
     result.mintItems = isMonsterDead
       ? _mintRandomItems(fInfo, ctx, genInfo, CalcLib.nextPrng)
       : new address[](0);
+
+    if(result.mintItems.length != 0) {
+      // set MF the same for all items
+      result.mintItemsMF = new uint32[](result.mintItems.length);
+      for(uint i; i < result.mintItems.length; ++i) {
+        result.mintItemsMF[i] = uint32(fInfo.heroFightInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.MAGIC_FIND)]);
+      }
+    }
+
     result.completed = isMonsterDead || isHeroDead;
 
     return result;
@@ -239,7 +248,14 @@ library MonsterLib {
   ) {
     IStatController.ChangeableStats memory heroStats = adrContext.statController.heroStats(adrContext.heroToken, adrContext.heroTokenId);
 
-    (int32[] memory heroAttributes, int32 _manaConsumed) = _buffAndGetHeroAttributes(heroStats.level, attackInfo, adrContext);
+    (int32[] memory heroAttributes, int32 _manaConsumed) = _buffAndGetHeroAttributes(
+      heroStats.level,
+      attackInfo.skillTokens,
+      attackInfo.skillTokenIds,
+      adrContext.statController,
+      adrContext.heroToken,
+      adrContext.heroTokenId
+    );
 
     manaConsumed = _manaConsumed;
 
@@ -259,18 +275,21 @@ library MonsterLib {
 
   function _buffAndGetHeroAttributes(
     uint level,
-    IFightCalculator.AttackInfo memory attackInfo,
-    AdrContext memory context
+    address[] memory skillTokens,
+    uint[] memory skillTokenIds,
+    IStatController statController,
+    address heroToken,
+    uint heroTokenId
   ) internal view returns (
     int32[] memory heroAttributes,
     int32 manaConsumed
   ) {
-    return context.statController.buffHero(IStatController.BuffInfo({
-      heroToken: context.heroToken,
-      heroTokenId: context.heroTokenId,
+    return statController.buffHero(IStatController.BuffInfo({
+      heroToken: heroToken,
+      heroTokenId: heroTokenId,
       heroLevel: uint32(level),
-      buffTokens: attackInfo.skillTokens,
-      buffTokenIds: attackInfo.skillTokenIds
+      buffTokens: skillTokens,
+      buffTokenIds: skillTokenIds
     }));
   }
 
@@ -279,16 +298,12 @@ library MonsterLib {
   // @param heroAttackInfo Checked attack info. Assume that all skill tokens belong either to the hero or to the helper.
   function _debuff(
     int32[] memory attributes,
-    IFightCalculator.AttackInfo memory heroAttackInfo,
-    AdrContext memory context
+    IFightCalculator.AttackInfo memory attackInfo,
+    IItemController itemController
   ) internal view {
-    uint length = heroAttackInfo.skillTokens.length;
+    uint length = attackInfo.skillTokens.length;
     for (uint i; i < length; ++i) {
-      (int32[] memory values, uint8[] memory ids) = context.itemController.targetAttributes(
-        heroAttackInfo.skillTokens[i],
-        heroAttackInfo.skillTokenIds[i]
-      );
-
+      (int32[] memory values, uint8[] memory ids) = itemController.targetAttributes(attackInfo.skillTokens[i], attackInfo.skillTokenIds[i]);
       StatLib.attributesAdd(attributes, StatLib.valuesToFullAttributesArray(values, ids));
     }
   }
@@ -325,7 +340,7 @@ library MonsterLib {
       random_
     );
 
-    _debuff(fighterInfo.fighterAttributes, heroAttackInfo, adrCtx);
+    _debuff(fighterInfo.fighterAttributes, heroAttackInfo, adrCtx.itemController);
 
     fighterInfo.fighterStats.life = gen.generated
       ? uint32(gen.hp)
@@ -341,6 +356,7 @@ library MonsterLib {
     return (fighterInfo, rarity, genInfo);
   }
 
+  /// @notice Fight between the hero and the monster
   /// @param random_ Pass _pseudoRandom here, param is required to simplify unit testing
   /// @param fight_ Pass FightLib.fight here, param is required to simplify unit testing
   function _fight(
@@ -352,7 +368,7 @@ library MonsterLib {
     function(
       IItemController,
       IFightCalculator.FightCall memory,
-      address,
+      IFightCalculator.FightCallAdd memory,
       function (uint) internal view returns (uint)
     ) internal returns (IFightCalculator.FightResult memory) fight_
   ) internal returns (
@@ -365,7 +381,6 @@ library MonsterLib {
     {
       IFightCalculator.AttackInfo memory heroAttackInfo = decodeAndCheckAttackInfo(
         adrCtx.itemController,
-        IHeroController(IController(adrCtx.controller).heroController()),
         ctx.data,
         adrCtx.heroToken,
         adrCtx.heroTokenId
@@ -401,7 +416,10 @@ library MonsterLib {
         iteration: ctx.iteration,
         turn: gen.turnCounter
       }),
-      ctx.sender,
+      IFightCalculator.FightCallAdd({
+        msgSender: ctx.sender,
+        fightId: 0
+      }),
       random_
     );
 
@@ -484,7 +502,7 @@ library MonsterLib {
         amplifier: fInfo.monsterRarity,
         seed: 0,
         oracle: IOracle(ctx.controller.oracle()),
-        magicFind: fInfo.heroFightInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.MAGIC_FIND)],
+        magicFind: 0, // fInfo.heroFightInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.MAGIC_FIND)],
         destroyItems: fInfo.heroFightInfo.fighterAttributes[uint(IStatController.ATTRIBUTES.DESTROY_ITEMS)],
         maxItems: genInfo.maxDropItems,
         mintDropChanceDelta: ctx.objectSubType == uint8(IGOC.ObjectSubType.BOSS_3) ? 0 : // do not reduce drop for bosses at all
@@ -492,22 +510,11 @@ library MonsterLib {
           fInfo.heroFightInfo.fighterStats.experience,
           uint8(fInfo.heroFightInfo.fighterStats.level),
           ctx.biome
-        ),
-        mintDropChanceNgLevelMultiplier: _getMintDropChanceNgLevelMultiplier(ctx)
+        )
       }),
       nextPrng_
     );
   }
-
-  /// @return drop chance multiplier, decimals 1e18; result value is guaranteed to be <= 1e18
-  function _getMintDropChanceNgLevelMultiplier(IGOC.ActionContext memory ctx) internal view returns (uint) {
-    return Math.min(1e18, RewardsPoolLib.dropChancePercent(
-      IDungeonFactory(ctx.controller.dungeonFactory()).maxAvailableBiome(),
-      IHeroController(ctx.controller.heroController()).maxOpenedNgLevel(),
-      ctx.heroNgLevel
-    ));
-  }
-
   //endregion ------------------------ Internal calculations
 
   //region ------------------------ Utils
@@ -576,7 +583,6 @@ library MonsterLib {
   /// Ensure that skill tokens belong to the hero OR to the current helper (SIP-001)
   function decodeAndCheckAttackInfo(
     IItemController ic,
-    IHeroController heroController,
     bytes memory data,
     address heroToken,
     uint heroId
@@ -590,13 +596,8 @@ library MonsterLib {
       if (heroToken != h || hId != heroId) revert IAppErrors.NotYourAttackItem();
     }
 
-    (address helperHeroToken, uint helperHeroId) = heroController.heroReinforcementHelp(heroToken, heroId);
-    for (uint i; i < attackInfo.skillTokens.length; ++i) {
-      (address h, uint hId) = ic.equippedOn(attackInfo.skillTokens[i], attackInfo.skillTokenIds[i]);
-      if (
-        (heroToken != h || hId != heroId)
-        && ((helperHeroToken == address(0)) || (helperHeroToken != h || helperHeroId != hId))
-      ) revert IAppErrors.NotYourBuffItem();
+    if (! IItemControllerHelper(ic.itemControllerHelper()).areSkillsAvailableForHero(attackInfo.skillTokens, attackInfo.skillTokenIds, heroToken, heroId)) {
+      revert IAppErrors.NotYourBuffItem();
     }
 
     return attackInfo;

@@ -52,7 +52,7 @@ library FightLib {
   function fight(
     IItemController ic,
     IFightCalculator.FightCall memory callData,
-    address msgSender,
+    IFightCalculator.FightCallAdd memory callDataAdd,
     function (uint) internal view returns (uint) random_
   ) internal returns (
     IFightCalculator.FightResult memory
@@ -61,7 +61,13 @@ library FightLib {
 
     fightProcessing(fResult, random_);
 
-    emit IApplicationEvents.FightResultProcessed(msgSender, fResult, callData, callData.iteration);
+    if (callDataAdd.fightId == 0) {
+      // not pvp fight
+      emit IApplicationEvents.FightResultProcessed(callDataAdd.msgSender, fResult, callData, callData.iteration);
+    } else {
+      // pvp fight
+      emit IApplicationEvents.PvpFightResultProcessed(callDataAdd.fightId, callDataAdd.msgSender, fResult, callData.turn, callData.heroAdr, callData.heroId);
+    }
 
     return IFightCalculator.FightResult({
       healthA: fResult.fighterA.health,

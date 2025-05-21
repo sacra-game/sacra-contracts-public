@@ -122,8 +122,8 @@ contract ReinforcementController is Controllable, IReinforcementController, ERC7
     return ReinforcementControllerLib.getConfigV2();
   }
 
-  function getFeeAmount(uint hitsLast24h, uint8 biome) external view returns (uint feeAmount) {
-    return ReinforcementControllerLib.getFeeAmount(IController(controller()).gameToken(), hitsLast24h, biome);
+  function getFeeAmount(uint hitsLast24h, uint8 biome, uint8 ngLevel) external view returns (uint feeAmount) {
+    return ReinforcementControllerLib.getFeeAmount(IController(controller()).gameToken(), hitsLast24h, biome, ngLevel);
   }
 
   function getHitsNumberPerLast24Hours(uint8 biome) external view returns (uint hitsLast24h) {
@@ -162,13 +162,13 @@ contract ReinforcementController is Controllable, IReinforcementController, ERC7
 
   //region ------------------------ Rewards for reinforcement of any kind
   /// @dev Only for dungeon. Assume the tokens already sent to this contract.
-  function registerTokenReward(address heroToken, uint heroId, address token, uint amount) external override {
-    ReinforcementControllerLib.registerTokenReward(IController(controller()), heroToken, heroId, token, amount);
+  function registerTokenReward(address heroToken, uint heroId, address token, uint amount, uint64 dungeonId) external override {
+    ReinforcementControllerLib.registerTokenReward(IController(controller()), heroToken, heroId, token, amount, dungeonId);
   }
 
   /// @dev Only for dungeon. Assume the NFT already sent to this contract.
-  function registerNftReward(address heroToken, uint heroId, address token, uint tokenId) external override {
-    ReinforcementControllerLib.registerNftReward(IController(controller()), heroToken, heroId, token, tokenId);
+  function registerNftReward(address heroToken, uint heroId, address token, uint tokenId, uint64 dungeonId) external override {
+    ReinforcementControllerLib.registerNftReward(IController(controller()), heroToken, heroId, token, tokenId, dungeonId);
   }
 
   function claimAll(address heroToken, uint heroId) external {
@@ -198,7 +198,7 @@ contract ReinforcementController is Controllable, IReinforcementController, ERC7
   function releaseGuildHero(address helperHeroToken, uint helperHeroTokenId) external {
     return ReinforcementControllerLib.releaseGuildHero(IController(controller()), helperHeroToken, helperHeroTokenId);
   }
-    //endregion ------------------------ Guild reinforcement
+  //endregion ------------------------ Guild reinforcement
 
   //region ------------------------ Reinforcement V2
   /// @notice Stake hero in reinforcement-v2

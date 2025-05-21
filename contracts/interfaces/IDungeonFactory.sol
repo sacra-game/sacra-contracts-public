@@ -54,6 +54,9 @@ interface IDungeonFactory {
     mapping(uint16 => DungeonAttributes) dungeonAttributes;
     /// @dev dungeonId => status
     mapping(uint64 => DungeonStatus) dungeonStatuses;
+
+    /// @notice NG_LEVEL of the hero that has created the given dungeon
+    mapping(uint64 dungeonId => uint ngLevel) dungeonNgLevel;
   }
 
   struct ObjectGenerateInfo {

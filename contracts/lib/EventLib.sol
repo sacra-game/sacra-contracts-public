@@ -63,7 +63,7 @@ library EventLib {
   ) {
     IStatController sc = IStatController(ctx.controller.statController());
 
-    IStatController.ActionInternalInfo memory gen = _generate(ctx, info, sc);
+    IStatController.EventActionInfo memory gen = _generate(ctx, info, sc);
 
     if (gen.posAttributes.length != 0) {
       sc.changeBonusAttributes(IStatController.ChangeAttributesInfo({
@@ -97,6 +97,15 @@ library EventLib {
     result.manaConsumed = CalcLib.minI32(gen.manaConsumed, int32(stats.mana));
     result.mintItems = gen.mintedItems;
 
+    if(result.mintItems.length != 0) {
+      // set MF the same for all items
+      result.mintItemsMF = new uint32[](result.mintItems.length);
+      uint32 mf = uint32(sc.heroAttribute(ctx.heroToken, ctx.heroTokenId, uint(IStatController.ATTRIBUTES.MAGIC_FIND)));
+      for(uint i; i < result.mintItems.length; ++i) {
+        result.mintItemsMF[i] = mf;
+      }
+    }
+
     if (stats.life <= gen.damage.toUint()) {
       result.kill = true;
     }
@@ -113,7 +122,7 @@ library EventLib {
 
   /// @notice Generate either positive or negative attributes, mint single item in any case
   function _generate(IGOC.ActionContext calldata ctx, IGOC.EventInfo storage info, IStatController sc) internal returns (
-    IStatController.ActionInternalInfo memory result
+    IStatController.EventActionInfo memory result
   ) {
     uint32 goodChance = info.goodChance;
     if (goodChance > CalcLib.MAX_CHANCE) revert IAppErrors.TooHighChance(goodChance);
@@ -171,8 +180,7 @@ library EventLib {
         magicFind: 0,
         destroyItems: 0,
         maxItems: 1, // MINT ONLY 1 ITEM!
-        mintDropChanceDelta: StatLib.mintDropChanceDelta(stats.experience, uint8(stats.level), ctx.biome),
-        mintDropChanceNgLevelMultiplier: 1e18
+        mintDropChanceDelta: StatLib.mintDropChanceDelta(stats.experience, uint8(stats.level), ctx.biome)
       }),
       nextPrng_
     );

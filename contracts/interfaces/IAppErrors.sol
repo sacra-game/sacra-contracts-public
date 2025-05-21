@@ -115,6 +115,7 @@ interface IAppErrors {
   error ReentrancyGuardReentrantCall();
   error TooLongString();
   error AlreadyDeployed(address deployed);
+  error AlreadyClaimed();
 
   //region Restrictions
   error ErrorNotDeployer(address sender);
@@ -131,6 +132,7 @@ interface IAppErrors {
   error ErrorNotStoryController();
   error ErrorNotAllowedSender();
   error MintNotAllowed();
+  error NotPvpController();
   //endregion Restrictions
 
   //region PackingLib
@@ -154,6 +156,7 @@ interface IAppErrors {
   error ErrorHeroNotInDungeon();
   error HeroInDungeon();
   error ErrorNotOwner(address token, uint tokenId);
+  error ErrorNotOwnerOrHero(address token, uint tokenId);
   error Staked(address heroToken, uint heroId);
   error NameTaken();
   error TooBigName();
@@ -167,6 +170,20 @@ interface IAppErrors {
   error NgpNotActive(address hero);
   error RebornNotAllowed();
   error AlreadyPrePaidHero();
+
+  error TierForbidden();
+  error SandboxPrepaidOnly();
+  error SandboxNgZeroOnly();
+  error SandboxModeNotAllowed();
+  error SandboxUpgradeModeRequired();
+  error SandboxModeRequired();
+  error SandboxItemOutside();
+  error SandboxItemNotActive();
+  error SandboxItemNotRegistered();
+  error SandboxItemAlreadyEquipped();
+  error SandboxDifferentHeroesNotAllowed();
+  error HeroWasTransferredBetweenAccounts();
+  error SandboxFreeHeroNotAllowed();
   //endregion Hero
 
   //region Dungeon
@@ -180,6 +197,7 @@ interface IAppErrors {
   error DungeonAlreadySpecific(uint16 dungNum);
   error DungeonAlreadySpecific2(uint16 dungNum);
   error WrongSpecificDungeon();
+  error LastLifeChance();
   //endregion Dungeon
 
   //region Items
@@ -226,6 +244,9 @@ interface IAppErrors {
   error MaxValue(uint value);
   error UnexpectedOtherItem(address item);
   error NotExist();
+  error ItemNotFound(address item, uint itemId);
+  error NoFirstAugmentationInfo();
+  error NotAugmentationProtectiveItem(address item);
   //endregion Items
 
   //region Stages
@@ -302,6 +323,9 @@ interface IAppErrors {
   error NotAnswer();
   error AnswerStoryIdMismatch(uint16 storyId, uint16 storyIdFromAnswerHash);
   error AnswerPageIdMismatch(uint16 pageId, uint16 pageIdFromAnswerHash);
+  error NotSkippableStory();
+  error StoryNotPassed();
+  error SkippingNotAllowed();
   //endregion Story
 
   //region FightLib
@@ -354,6 +378,7 @@ interface IAppErrors {
   error NotStaked();
   error NoStakedHeroes();
   error GuildHelperNotAvailable(uint guildId, address helper, uint helperId);
+  error PvpStaked();
   error HelperNotAvailableInGivenBiome();
   //endregion ReinforcementController
 
@@ -390,7 +415,7 @@ interface IAppErrors {
   //region Misc
   error UnknownHeroClass(uint heroClass);
   error AbsDiff(int32 a, int32 b);
-  //region Misc
+  //endregion Misc
 
   //region ------------------------ UserController
   error NoAvailableLootBox(address msgSender, uint lootBoxKind);
@@ -425,6 +450,27 @@ interface IAppErrors {
   error NotStakedInGuild();
   error ShelterHasNotEnoughLevelForReinforcement();
   error NotBusyGuildHelper();
+  error TooLowGuildLevel();
+
+  /// @notice Target biome can be selected only once per epoch
+  error BiomeAlreadySelected();
+  error NoDominationRequest();
+  error PvpFightIsNotPrepared(uint8 biome, uint32 week, address user);
+  error PvpFightIsCompleted(uint8 biome, uint32 week, address user);
+  error TooLowMaxCountTurns();
+  error UserTokensVaultAlreadySet();
+
+  error DifferentBiomeInPvpFight();
+  error PvpFightOpponentNotFound();
+  error PvpHeroHasInitializedFight();
+  error PvpHeroNotRegistered();
+
+  /// @notice User should unregister pvp-hero from prev biome and only then register it in the new biome
+  error UserHasRegisteredPvpHeroInBiome(uint8 biome);
+  error UserHasRegisteredPvpHero();
+  error UserNotAllowedForPvpInCurrentEpoch(uint week);
+
+  error UnknownPvpStrategy();
 
   error GuildRequestNotActive();
   error GuildRequestNotAvailable();
@@ -460,8 +506,8 @@ interface IAppErrors {
   error NotShelterAuction();
   error AuctionPositionOpened(uint positionId);
   error AuctionSellerCannotBid();
-  error CannotApplyNotLastBid();
   error AuctionGuildWithShelterCannotBid();
+  error AuctionBidExists();
   //endregion ------------------------ Auction
 
   //region ------------------------ Pawnshop

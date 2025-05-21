@@ -2,9 +2,17 @@
 pragma solidity 0.8.23;
 
 import "../interfaces/IERC20.sol";
+import "../interfaces/IERC721.sol";
 
-/// @notice Common internal utils
+/// @notice Common internal utils, shared constants
 library AppLib {
+
+  /// @notice Biome owner has the right to receive 1% tax on any income in the biome. Decimals 3.
+  /// The final value of tax is in the range [1..10]%, it depends on total liquidity staked by the guild
+  uint internal constant BIOME_TAX_PERCENT_MIN = 1_000; // 1%
+
+  /// @notice Max possible value of biome owner tax percent, decimals 3.
+  uint internal constant BIOME_TAX_PERCENT_MAX = 10_000; // 10%
 
   /// @notice Make infinite approve of {token} to {spender} if the approved amount is less than {amount}
   /// @dev Should NOT be used for third-party pools
@@ -33,4 +41,21 @@ library AppLib {
   function sub0(uint32 a, uint32 b) internal pure returns (uint32) {
     return a > b ? a - b : 0;
   }
+
+  /// @notice Adjust the dungeon completion reward based on the hero's NG level
+  function _getAdjustedReward(uint amount, uint heroNgLevel) internal pure returns (uint) {
+    uint rewardPercent = heroNgLevel == 0
+      ? 40
+      : heroNgLevel == 1
+        ? 60
+        : heroNgLevel == 2
+            ? 80
+            : 100;
+    return amount * rewardPercent / 100;
+  }
+
+  function _ownerOf(address hero, uint heroId) internal view returns (address) {
+    return IERC721(hero).ownerOf(heroId);
+  }
+
 }

@@ -72,7 +72,6 @@ interface IReinforcementController {
     mapping(uint biome => LastWindowsV2) stat24hV2;
   }
 
-
   /// @notice Deprecated. Reinforcement v1
   struct HeroInfo {
     uint8 biome;
@@ -129,9 +128,9 @@ interface IReinforcementController {
 
   function isStaked(address heroToken, uint heroId) external view returns (bool);
 
-  function registerTokenReward(address heroToken, uint heroId, address token, uint amount) external;
+  function registerTokenReward(address heroToken, uint heroId, address token, uint amount, uint64 dungeonId) external;
 
-  function registerNftReward(address heroToken, uint heroId, address token, uint tokenId) external;
+  function registerNftReward(address heroToken, uint heroId, address token, uint tokenId, uint64 dungeonId) external;
 
   function askHeroV2(address hero, uint heroId, address helper, uint helperId) external returns (int32[] memory attributes);
 

@@ -17,7 +17,8 @@ interface IGuildController {
     SET_RELATION_KIND_9,
     BANK_ITEMS_OPERATION_10,
     SET_GUILD_PARAMS_11,
-    CHANGE_PURCHASING_SHELTER_ITEMS_CAPACITY_12
+    CHANGE_PURCHASING_SHELTER_ITEMS_CAPACITY_12,
+    DOMINATION_REQUEST_13
   }
 
   enum GuildsParams {
@@ -28,6 +29,8 @@ interface IGuildController {
     REENTRANT_STATUS_4,
     SHELTER_CONTROLLER_5,
     SHELTER_AUCTION_6
+
+    // max 255 params because enum is uint8 by default
   }
 
   enum GuildRequestStatus {
@@ -84,6 +87,9 @@ interface IGuildController {
 
     /// @notice guild id => guildDescription
     mapping(uint guildId => string) guildDescription;
+
+    /// @notice guild id => guildBanner
+    mapping(uint guildId => string) guildBanner;
   }
 
   struct GuildData {
@@ -147,6 +153,9 @@ interface IGuildController {
   function getGuildBank(uint guildId) external view returns (address);
   function shelterController() external view returns (address);
 
+  function isPeacefulRelation(uint guildId, uint guildId2) external view returns (bool);
+  function incPvpCounter(uint guildId, uint64 value) external;
+
   function usePvpPoints(uint guildId, address user, uint64 priceInPvpPoints) external;
   function payFromGuildBank(uint guildId, uint shelterPrice) external;
   function payFromBalance(uint amount, address user) external;
@@ -155,4 +164,5 @@ interface IGuildController {
   function checkPermissions(address user, uint right) external view returns (uint guildId, uint rights);
   function shelterAuctionController() external view returns (address);
   function payForAuctionBid(uint guildId, uint amount, uint bid) external;
+
 }

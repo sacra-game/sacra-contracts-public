@@ -13,7 +13,7 @@ interface IHeroController {
     /// @dev Deprecated. Controller is used instead.
     address heroTokensVault;
 
-    /// @dev heroAdr => packed tokenAdr160+ amount96
+    /// @notice heroAdr => packed tokenAdr160+ amount96
     mapping(address => bytes32) payToken;
 
     /// @dev heroAdr => heroCls8
@@ -61,6 +61,14 @@ interface IHeroController {
 
     /// @notice Max NG_LEVEL reached by any user
     uint maxOpenedNgLevel;
+
+    /// @notice Sandbox mode for heroes, see SCR-1153
+    mapping(bytes32 packedHero => SandboxMode sandboxMode) sandbox;
+
+    /// @notice List of packed skill-tokens equipped on the helper at the moment of asking him for help by the hero
+    /// @dev Packed skill contains item address, item id and slot number (use unpackNftIdWithValue)
+    /// Size of the array can be 0..3
+    mapping(bytes32 packedHero => bytes32[] packedSkills) helperSkills;
   }
 
   /// @notice Tier = hero creation cost option
@@ -81,8 +89,13 @@ interface IHeroController {
   }
 
   /// @notice Current NG+-related values
+  /// @dev Only post-paid hero has tier = 0
+  /// @dev Only free-hero has paidToken != 0 && paidAmount == 0
   struct HeroInfo {
-    /// @notice Hero tier = [0..3]. 0 - the hero is post-paid, it can be changed by upgrading the hero to pre-paid
+    /// @notice Hero tier = [0..3].
+    /// 0 - the hero is post-paid, it can be changed by upgrading the hero to pre-paid
+    /// always 1 for sandbox-heroes
+    /// always 1 for free-heroes
     uint8 tier;
 
     /// @notice NG_LVL of the hero
@@ -94,9 +107,11 @@ interface IHeroController {
     /// @notice Amount paid for the hero on creation OR on upgrade to NG+
     /// Amount paid for creation of the hero in terms of game token (!NG+) is NOT stored here.
     /// @dev uint72 is used here to pack the whole struct to single slot
+    /// Zero for sandbox-heroes and for free-heroes
     uint72 paidAmount;
 
     /// @notice Pay token used to pay {paidAmount}
+    /// Zero for sandbox-heroes
     address paidToken;
   }
 
@@ -119,8 +134,21 @@ interface IHeroController {
 
     /// @notice Optional: ref-code to be passed to the hero-creation-related event
     string refCode;
+
+    /// @notice SCR-1153: create not-paid hero with limited rights
+    bool sandboxMode;
   }
 
+  enum SandboxMode {
+    /// @notice The hero is created in normal (not sandbox) mode
+    NORMAL_MODE_0,
+
+    /// @notice The hero was created in sandbox mode and wasn't upgraded.
+    SANDBOX_MODE_1,
+
+    /// @notice The hero was created in sandbox mode and was upgraded to the normal mode
+    UPGRADED_TO_NORMAL_2
+  }
 
   //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -145,10 +173,6 @@ interface IHeroController {
 
   function kill(address hero, uint heroId) external returns (bytes32[] memory dropItems);
 
-  /// @notice Take off all items from the hero, reduce life to 1. The hero is NOT burnt.
-  /// Optionally reduce mana to zero and/or decrease life chance.
-  function softKill(address hero, uint heroId, bool decLifeChances, bool resetMana) external returns (bytes32[] memory dropItems);
-
   function releaseReinforcement(address hero, uint heroId) external returns (address helperToken, uint helperId);
 
   function resetLifeAndMana(address hero, uint heroId) external;
@@ -162,4 +186,12 @@ interface IHeroController {
   function registerKilledBoss(address hero, uint heroId, uint32 objectId) external;
 
   function maxOpenedNgLevel() external view returns (uint);
+
+  function sandboxMode(address hero, uint heroId) external view returns (uint8);
+
+  function helperSkills(address hero, uint heroId) external view returns (
+    address[] memory items,
+    uint[] memory itemIds,
+    uint[] memory slots
+  );
 }

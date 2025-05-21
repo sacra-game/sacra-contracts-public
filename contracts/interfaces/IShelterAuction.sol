@@ -10,6 +10,8 @@ interface IShelterAuction {
     POSITION_COUNTER_1,
     BID_COUNTER_2,
     FEE_3
+
+    // max 255 params because enum is uint8 by default
   }
 
   //region ------------------------ Data types
@@ -60,6 +62,7 @@ interface IShelterAuction {
   }
 
   struct AuctionBid {
+    /// @notice Only last bid is opened, all previous bids are closed automatically
     bool open;
     /// @notice User that opens the bid. The user belongs to the guild with id = {buyerGuildId}
     address buyer;

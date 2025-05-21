@@ -15,20 +15,13 @@ library HeroControllerLib {
   using PackingLib for address;
   using EnumerableSet for EnumerableSet.UintSet;
 
+  /// @notice Enable discounts for pre-paid heroes (100% of lost profit) if ngLevel > 0
+  bool constant private ENABLE_DISCOUNTS = false;
+
   //region ------------------------ Restrictions
 
-  function onlyDeployer(IController controller) internal view {
-    if (! controller.isDeployer(msg.sender)) revert IAppErrors.ErrorNotDeployer(msg.sender);
-  }
-
-  function onlyEOA(bool isEoa) internal view {
-    if (!isEoa) {
-      revert IAppErrors.NotEOA(msg.sender);
-    }
-  }
-
   function onlyItemController(IController controller_) internal view {
-    if (controller_.itemController() != msg.sender) revert IAppErrors.ErrorNotItemController(msg.sender);
+    if (address(HeroLib._getItemController(controller_)) != msg.sender) revert IAppErrors.ErrorNotItemController(msg.sender);
   }
   //endregion ------------------------ Restrictions
 
@@ -66,7 +59,7 @@ library HeroControllerLib {
   }
 
   function score(IController controller, address hero, uint heroId) internal view returns (uint) {
-    IStatController _statController = IStatController(controller.statController());
+    IStatController _statController = HeroLib._getStatController(controller);
     return ScoreLib.heroScore(
       _statController.heroAttributes(hero, heroId),
       _statController.heroStats(hero, heroId).level
@@ -103,18 +96,16 @@ library HeroControllerLib {
     return (payAmount, slots, items);
   }
 
+  function sandboxMode(address hero, uint heroId) internal view returns (IHeroController.SandboxMode) {
+    return _S().sandbox[PackingLib.packNftId(hero, heroId)];
+  }
   //endregion ------------------------ Views
 
   //region ------------------------ Governance actions
 
-  function registerHero(IController controller, address hero, uint8 heroClass_, address payToken, uint payAmount) internal {
-    onlyDeployer(controller);
-    HeroLib.registerHero(hero, heroClass_, payToken, payAmount);
-  }
-
   /// @dev payAmount is limited by uint72, see remarks to IHeroController.HeroInfo
   function setTier(IController controller, uint8 tier, address hero, uint72 payAmount, uint8[] memory slots, address[][] memory items) internal {
-    onlyDeployer(controller);
+    HeroLib.onlyDeployer(controller);
 
     if (tier != HeroLib.TIER_2 && tier != HeroLib.TIER_3) revert IAppErrors.WrongTier(tier);
 
@@ -173,7 +164,7 @@ library HeroControllerLib {
     string memory refCode,
     bool enter
   ) external returns (uint) {
-    onlyEOA(isEoa);
+    HeroLib.onlyEOA(isEoa);
     return _create(controller, msgSender, hero, _heroName, refCode, enter);
   }
 
@@ -207,19 +198,39 @@ library HeroControllerLib {
 
     // ----------- get pay token and pay amount
     (address payToken, uint amount) = _S().payToken[hero].unpackAddressWithAmount();
-    if (payToken == address(0)) revert IAppErrors.ZeroToken();
+    if (payToken == address(0)) revert IAppErrors.ZeroToken(); // old free heroes like hero 5 are not supported anymore
 
-    bool prepayment = payToken != address(ControllerContextLib.getGameToken(cc));
-    if (prepayment) {
-      if (data.tier == HeroLib.TIER_DEFAULT) data.tier = HeroLib.TIER_1; // use tier 1 by default
-      if (data.tier > HeroLib.TIER_1) {
-        amount = _S().tiers[PackingLib.packTierHero(data.tier, hero)].amount;
-      }
-    } else {
-      if (data.tier != HeroLib.TIER_DEFAULT) revert IAppErrors.NgpNotActive(hero);
+    bool freeHero = amount == 0;
+    bool postpaid = payToken == address(ControllerContextLib.gameToken(cc));
+
+    // ----------- use tier 1 by default (0 tier is stored in postpaid mode only)
+    if (!postpaid || data.sandboxMode) {
+      if (data.tier == HeroLib.TIER_DEFAULT) data.tier = HeroLib.TIER_1;
     }
-    if (amount == 0) revert IAppErrors.ZeroAmount();
+
+    if (!data.sandboxMode && !freeHero) {
+      if (postpaid) {
+        if (data.tier != HeroLib.TIER_DEFAULT) revert IAppErrors.NgpNotActive(hero);
+      } else {
+        if (data.tier > HeroLib.TIER_1) {
+          amount = _S().tiers[PackingLib.packTierHero(data.tier, hero)].amount;
+        }
+      }
+    }
+
+    if (amount == 0 && !freeHero) revert IAppErrors.ZeroAmount();
     if (_S().maxUserNgLevel[data.targetUserAccount] < data.ngLevel) revert IAppErrors.NotEnoughNgLevel(data.ngLevel);
+
+    // ----------- Check sandbox / free-hero limitations
+    if (data.sandboxMode || freeHero) {
+      if (data.tier != HeroLib.TIER_1) revert IAppErrors.TierForbidden();
+    }
+
+    if (data.sandboxMode) {
+      if (postpaid) revert IAppErrors.SandboxPrepaidOnly();
+      if (data.ngLevel != 0) revert IAppErrors.SandboxNgZeroOnly();
+      if (freeHero) revert IAppErrors.SandboxFreeHeroNotAllowed();
+    }
 
     // ----------- mint new hero on selected NG+ level
     heroId = IHero(hero).mintFor(data.targetUserAccount);
@@ -228,10 +239,11 @@ library HeroControllerLib {
     _S().heroName[packedId] = data.heroName;
     _S().nameToHero[data.heroName] = packedId;
 
-    if (data.ngLevel != 0 && prepayment) {
+    // ----------- calculate discount if any
+    if (ENABLE_DISCOUNTS && data.ngLevel != 0 && !postpaid && !freeHero) {
       // discount for hero = 100% of lost profit
-      uint lostProfitPercent = ControllerContextLib.getRewardsPool(cc).lostProfitPercent(
-        ControllerContextLib.getDungeonFactory(cc).maxAvailableBiome(),
+      uint lostProfitPercent = ControllerContextLib.rewardsPool(cc).lostProfitPercent(
+        ControllerContextLib.dungeonFactory(cc).maxAvailableBiome(),
         _S().maxOpenedNgLevel,
         data.ngLevel
       );
@@ -240,29 +252,32 @@ library HeroControllerLib {
       amount -= discount;
     }
 
-    if (prepayment) {
-      _S().heroInfo[packedId] = IHeroController.HeroInfo({
-        tier: data.tier,
-        ngLevel: data.ngLevel,
-        rebornAllowed: false,
-        paidAmount: amount > type(uint72).max ? type(uint72).max : uint72(amount), // edge case, uint72 is enough for any reasonable amount of stable coins with decimals 18
-        paidToken : payToken
-      });
-    } else {
-      _S().heroInfo[packedId] = IHeroController.HeroInfo({
-        tier: 0,
-        ngLevel: data.ngLevel,
-        rebornAllowed: false,
-        paidAmount: 0,
-        paidToken: address(0)
-      });
+    // ----------- register and initialize the hero
+    _S().heroInfo[packedId] = IHeroController.HeroInfo({
+      tier: data.tier,
+      ngLevel: data.ngLevel,
+      rebornAllowed: false,
+      paidAmount: data.sandboxMode || postpaid
+        ? 0
+        : amount > type(uint72).max ? type(uint72).max : uint72(amount), // edge case, uint72 is enough for any reasonable amount of stable coins with decimals 18
+      paidToken: data.sandboxMode || postpaid
+        ? address(0)
+        : payToken
+    });
+    if (data.sandboxMode) {
+      _S().sandbox[packedId] = IHeroController.SandboxMode.SANDBOX_MODE_1;
     }
 
-    ControllerContextLib.getStatController(cc).initNewHero(hero, heroId, _S().heroClass[hero]);
+    ControllerContextLib.statController(cc).initNewHero(hero, heroId, _S().heroClass[hero]);
 
     // ----------- pay for the hero creation
-    controller.process(payToken, amount, msgSender);
-    emit IApplicationEvents.HeroCreatedNgp(hero, heroId, data.heroName, data.targetUserAccount, data.refCode, data.tier, data.ngLevel);
+    emit IApplicationEvents.HeroCreatedNgpSandbox(hero, heroId, data.heroName, data.targetUserAccount, data.refCode, data.tier, data.ngLevel, data.sandboxMode);
+
+    if (freeHero) {
+      emit IApplicationEvents.FreeHeroCreated(hero, heroId);
+    } else if (!data.sandboxMode) {
+      controller.process(payToken, amount, msgSender);
+    }
 
     // ----------- enter to the first biome/dungeon
     // set first biome by default
@@ -272,10 +287,10 @@ library HeroControllerLib {
     // ----------- mint and equip items
     if (data.tier > HeroLib.TIER_1) {
       // attributes before items equipment
-      int32[] memory attributes = ControllerContextLib.getStatController(cc).heroAttributes(hero, heroId);
+      int32[] memory attributes = ControllerContextLib.statController(cc).heroAttributes(hero, heroId);
 
       _mintAndEquipItems(
-        ControllerContextLib.getItemController(cc),
+        ControllerContextLib.itemController(cc),
         _S().tiers[PackingLib.packTierHero(data.tier, hero)],
         hero,
         heroId,
@@ -283,12 +298,12 @@ library HeroControllerLib {
       );
 
       // restore hp/mp after equipments: increase life and mana on {current attr.value - attr.value before equip}
-      ControllerContextLib.getStatController(cc).restoreLifeAndMana(hero, heroId, attributes);
+      ControllerContextLib.statController(cc).restoreLifeAndMana(hero, heroId, attributes);
     }
 
     // enter to the first dungeon
     if (data.enter) {
-      ControllerContextLib.getDungeonFactory(cc).launchForNewHero(hero, heroId, data.targetUserAccount);
+      ControllerContextLib.dungeonFactory(cc).launchForNewHero(hero, heroId, data.targetUserAccount);
     }
 
     return heroId;
@@ -315,7 +330,7 @@ library HeroControllerLib {
         itemSlots[i] = uint8(slots.at(i));
         address[] storage listItems = itemsToMint[itemSlots[i]];
         items[i] = listItems[CalcLib.pseudoRandom(listItems.length - 1)];
-        itemIds[i] = itemController.mint(items[i], msgSender);
+        itemIds[i] = itemController.mint(items[i], msgSender, 0);
       }
 
       itemController.equip(hero, heroId, items, itemIds, itemSlots);
@@ -324,46 +339,36 @@ library HeroControllerLib {
   //endregion ------------------------ User actions - create hero
 
   //region ------------------------ User actions - biome, level up, reborn
-  function setBiome(bool isEoa, IController controller, address msgSender, address hero, uint heroId, uint8 biome) internal {
-    onlyEOA(isEoa);
-    HeroLib.setBiome(controller, msgSender, hero, heroId, biome);
-  }
-
-  function levelUp(
-    bool isEoa,
-    IController controller,
-    address msgSender,
-    address hero,
-    uint heroId,
-    IStatController.CoreAttributes memory change
-  ) internal {
-    onlyEOA(isEoa);
-    HeroLib.levelUp(controller, msgSender, hero, heroId, change);
-  }
-
   function beforeTokenTransfer(IController controller, address msgSender, address hero, uint heroId) internal returns (
     bool isAllowedToTransferOut
   ) {
     if (msgSender != hero) revert IAppErrors.ErrorForbidden(msgSender);
     HeroLib.onlyRegisteredHero(hero);
 
+    // --------------- don't allow to transfer sandbox hero but allow to burn it if the hero was killed
+    bytes32 packedHero = PackingLib.packNftId(hero, heroId);
+    if (HeroLib._getStatController(controller).isHeroAlive(hero, heroId)) {
+      HeroLib.checkSandboxMode(packedHero, false);
+    }
+
     isAllowedToTransferOut = HeroLib.isAllowedToTransfer(controller, hero, heroId);
-    _S().countHeroTransfers[PackingLib.packNftId(hero, heroId)] += 1;
+    _S().countHeroTransfers[packedHero] += 1;
   }
 
   function reborn(IController controller, address msgSender, address hero, uint heroId) external {
+    bytes32 packedHero = PackingLib.packNftId(hero, heroId);
+
     HeroLib._checkRegisteredNotPaused(controller, hero);
     HeroLib.onlyOwner(hero, heroId, msgSender);
+    HeroLib.checkSandboxMode(packedHero, false);
     (IDungeonFactory dungFactory, IStatController statController) = HeroLib._checkOutDungeonNotStakedAlive(controller, hero, heroId);
     // restriction "no equipped items" is checked on statController side
-
-    bytes32 packedHero = PackingLib.packNftId(hero, heroId);
 
     // -------------- update HeroInfo
     IHeroController.HeroInfo memory heroInfo = _S().heroInfo[packedHero];
     if (!heroInfo.rebornAllowed) revert IAppErrors.RebornNotAllowed();
 
-    heroInfo = _upgradeToPrePaidHero(controller, heroInfo, hero, msgSender);
+    heroInfo = _upgradeHero(controller, heroInfo, hero, msgSender);
 
     if (heroInfo.ngLevel == HeroLib.MAX_NG_LEVEL) revert IAppErrors.TooHighValue(heroInfo.ngLevel);
     uint8 newNgLevel = heroInfo.ngLevel + 1;
@@ -396,27 +401,50 @@ library HeroControllerLib {
     emit IApplicationEvents.Reborn(hero, heroId, newNgLevel);
   }
 
+  /// @notice Upgrade sandbox hero to the ordinal pre-paid hero.
+  /// The hero is upgraded to tier=1 always
+  /// Approve to controller for {payTokenInfo.amount} in {payTokenInfo.token} is required
+  function upgradeSandboxHero(IController controller, address msgSender, address hero, uint heroId) external {
+    bytes32 packedHero = PackingLib.packNftId(hero, heroId);
+
+    // -------------- check requirements
+    HeroLib._checkRegisteredNotPaused(controller, hero);
+    HeroLib.onlyOwner(hero, heroId, msgSender);
+    HeroLib.onlyAlive(HeroLib._getStatController(controller), hero, heroId);
+    HeroLib.checkSandboxMode(packedHero, true);
+    // equipped items are not forbidden, also the hero can be inside the dungeon
+
+    // -------------- upgrade the hero
+    IHeroController.HeroInfo memory heroInfo = _S().heroInfo[packedHero];
+    _S().heroInfo[packedHero] = _upgradeHero(controller, heroInfo, hero, msgSender);
+    _S().sandbox[packedHero] = IHeroController.SandboxMode.UPGRADED_TO_NORMAL_2;
+
+    IItemBoxController(controller.itemBoxController()).registerSandboxUpgrade(packedHero);
+
+    emit IApplicationEvents.SandboxUpgraded(hero, heroId);
+  }
+
   /// @notice Update Post-paid hero to Pre-paid hero if it's necessary and allowed
-  function _upgradeToPrePaidHero(
+  function _upgradeHero(
     IController controller,
     IHeroController.HeroInfo memory heroInfo,
     address hero,
     address msgSender
   ) internal returns (IHeroController.HeroInfo memory) {
     if (heroInfo.paidToken == address(0)) {
-      // the hero is post-paid, need to upgrade
+      // the hero is post-paid or sandbox, need to upgrade
       address gameToken = controller.gameToken();
 
       (address payToken, uint payAmountForTier1) = payTokenInfo(hero);
       if (payToken != gameToken) {
         // hero token is not game token, post-paid hero can be upgraded to pre-paid with tier 1
-        if (payAmountForTier1 == 0) revert IAppErrors.ZeroAmount();
-
         heroInfo.paidAmount = payAmountForTier1 > type(uint72).max ? type(uint72).max : uint72(payAmountForTier1);
         heroInfo.paidToken = payToken;
         heroInfo.tier = HeroLib.TIER_1;
 
-        controller.process(payToken, heroInfo.paidAmount, msgSender);
+        if (payAmountForTier1 != 0) {
+          controller.process(payToken, heroInfo.paidAmount, msgSender);
+        }
       }
     }
 
@@ -426,7 +454,7 @@ library HeroControllerLib {
 
   //region ------------------------ Dungeon actions
   function registerKilledBoss(IController controller, address msgSender, address hero, uint heroId, uint32 bossObjectId) external {
-    HeroLib.onlyDungeonFactory(controller.dungeonFactory(), msgSender);
+    HeroLib.onlyDungeonFactory(HeroLib._getDungeonFactory(controller), msgSender);
 
     uint biome = _S().heroBiome[PackingLib.packNftId(hero, heroId)];
 
@@ -437,13 +465,13 @@ library HeroControllerLib {
       bytes32 packedBiomeNgLevel = PackingLib.packUint8Array3(uint8(biome), heroInfo.ngLevel, 0);
 
       mapping (bytes32 packedBiomeNgLevel => uint timestamp) storage killedBosses = _S().killedBosses[PackingLib.packNftId(hero, heroId)];
-      uint8 maxAvailableBiome = IDungeonFactory(controller.dungeonFactory()).maxAvailableBiome();
+      uint8 maxAvailableBiome = HeroLib._getDungeonFactory(controller).maxAvailableBiome();
       if (killedBosses[packedBiomeNgLevel] == 0) {
         // the boss is killed first time - pay reward to pre-paid hero
         killedBosses[packedBiomeNgLevel] = block.timestamp;
 
         uint rewardAmount;
-        if (heroInfo.paidToken != controller.gameToken()) {
+        if (heroInfo.tier != HeroLib.TIER_DEFAULT) {
           // The hero is pre-paid, he is allowed to receive rewards from reward pool
           IRewardsPool rewardsPool = IRewardsPool(controller.rewardsPool());
           rewardAmount = rewardsPool.rewardAmount(
@@ -471,14 +499,16 @@ library HeroControllerLib {
 
   //region ------------------------ Classic and guild reinforcement
   function askReinforcement(bool isEoa, IController controller, address msgSender, address hero, uint heroId, address helper, uint helperId) internal {
-    onlyEOA(isEoa);
-    HeroLib.askReinforcement(controller, msgSender, hero, heroId, helper, helperId);
+    HeroLib.onlyEOA(isEoa);
+    HeroLib.onlyOwner(hero, heroId, msgSender);
+    HeroLib._askReinforcement(controller, hero, heroId, false, helper, helperId);
   }
 
   function askGuildReinforcement(IController controller, address hero, uint heroId, address helper, uint helperId) internal {
     onlyItemController(controller);
-    HeroLib.askGuildReinforcement(controller, hero, heroId, helper, helperId);
+    HeroLib._askReinforcement(controller, hero, heroId, true, helper, helperId);
   }
+
   //endregion ------------------------ Classic and guild reinforcement
 }
 

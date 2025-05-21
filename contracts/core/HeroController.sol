@@ -85,12 +85,29 @@ contract HeroController is Controllable, ERC2771Context, IHeroController {
   function maxUserNgLevel(address user) external view returns (uint) {
     return HeroLib.maxUserNgLevel(user);
   }
+
+  /// @return Return current status of the sandbox mode for the given hero
+  /// 0: The hero is created in normal (not sandbox) mode
+  /// 1: The hero was created in sandbox mode and wasn't upgraded.
+  /// 2: The hero has been created in sandbox mode and has been upgraded to the normal mode
+  function sandboxMode(address hero, uint heroId) external view returns (uint8) {
+    return uint8(HeroControllerLib.sandboxMode(hero, heroId));
+  }
+
+  /// @notice Get list of items equipped to the hero's helper at the moment of asking help by the helper
+  function helperSkills(address hero, uint heroId) external view returns (
+    address[] memory items,
+    uint[] memory itemIds,
+    uint[] memory slots
+  ) {
+    return HeroLib.helperSkills(hero, heroId);
+  }
   //endregion ------------------------ Views
 
   //region ------------------------ Governance actions
 
   function registerHero(address hero, uint8 heroClass_, address payToken, uint payAmount) external {
-    HeroControllerLib.registerHero(IController(controller()), hero, heroClass_, payToken, payAmount);
+    HeroLib.registerHero(IController(controller()), hero, heroClass_, payToken, payAmount);
   }
 
   /// @param payAmount Limited by uint72, see remarks to IHeroController.HeroInfo
@@ -117,11 +134,11 @@ contract HeroController is Controllable, ERC2771Context, IHeroController {
   }
 
   function setBiome(address hero, uint heroId, uint8 biome) external {
-    HeroControllerLib.setBiome(_isNotSmartContract(), IController(controller()), _msgSender(), hero, heroId, biome);
+    HeroLib.setBiome(_isNotSmartContract(), IController(controller()), _msgSender(), hero, heroId, biome);
   }
 
   function levelUp(address hero, uint heroId, IStatController.CoreAttributes memory change) external {
-    HeroControllerLib.levelUp(_isNotSmartContract(), IController(controller()), _msgSender(), hero, heroId, change);
+    HeroLib.levelUp(_isNotSmartContract(), IController(controller()), _msgSender(), hero, heroId, change);
   }
 
   function askReinforcement(address hero, uint heroId, address helper, uint helperId) external virtual {
@@ -133,6 +150,7 @@ contract HeroController is Controllable, ERC2771Context, IHeroController {
     return HeroControllerLib.beforeTokenTransfer(IController(controller()), _msgSender(), hero, heroId);
   }
 
+  /// @notice Ask guild-hero for reinforcement
   function askGuildReinforcement(address hero, uint heroId, address helper, uint helperId) external {
     HeroControllerLib.askGuildReinforcement(IController(controller()), hero, heroId, helper, helperId);
   }
@@ -142,18 +160,20 @@ contract HeroController is Controllable, ERC2771Context, IHeroController {
   function reborn(address hero, uint heroId) external {
     HeroControllerLib.reborn(IController(controller()), _msgSender(), hero, heroId);
   }
+
+  /// @notice Upgrade sandbox hero to the ordinal pre-paid hero.
+  /// The hero is upgraded to tier=1 always
+  /// Approve to controller for {payTokenInfo.amount} in {payTokenInfo.token} is required
+  function upgradeSandboxHero(address hero, uint heroId) external {
+    HeroControllerLib.upgradeSandboxHero(IController(controller()), _msgSender(), hero, heroId);
+  }
+
   //endregion ------------------------ USER ACTIONS
 
   //region ------------------------ DUNGEON ACTIONS
 
   function kill(address hero, uint heroId) external override returns (bytes32[] memory dropItems) {
     return HeroLib.kill(IController(controller()), _msgSender(), hero, heroId);
-  }
-
-  function softKill(address hero, uint heroId, bool decLifeChances, bool resetMana) external override returns (
-    bytes32[] memory dropItems
-  ) {
-    return HeroLib.softKill(IController(controller()), _msgSender(), hero, heroId, decLifeChances, resetMana);
   }
 
   function releaseReinforcement(address hero, uint heroId) external override returns (address helperToken, uint helperId) {

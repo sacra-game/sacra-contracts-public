@@ -13,9 +13,10 @@ abstract contract ERC2771Context {
   // for whitelist new relayers need to add new constants and update proxies
   address private constant GELATO_RELAY_1_BALANCE_ERC_2771 = 0xd8253782c45a12053594b9deB72d8e8aB2Fca54c;
   address private constant SACRA_RELAY = 0x52CEba41Da235Af367bFC0b0cCd3314cb901bB5F;
+  address private constant SACRA_RELAY_2 = 0x102f1f556cD9C3D5f820E6920A8931657c5Da21B;
 
   function isTrustedForwarder(address forwarder) public view virtual returns (bool){
-    return forwarder == GELATO_RELAY_1_BALANCE_ERC_2771 || forwarder == SACRA_RELAY;
+    return forwarder == GELATO_RELAY_1_BALANCE_ERC_2771 || forwarder == SACRA_RELAY || forwarder == SACRA_RELAY_2;
   }
 
   function _msgSender() internal view virtual returns (address sender) {

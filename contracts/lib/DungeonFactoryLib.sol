@@ -79,7 +79,7 @@ library DungeonFactoryLib {
   }
 
   function onlyItemController(ControllerContextLib.ControllerContext memory cc) internal view {
-    IItemController itemController = ControllerContextLib.getItemController(cc);
+    IItemController itemController = ControllerContextLib.itemController(cc);
     if (address(itemController) != msg.sender) revert IAppErrors.ErrorNotItemController(msg.sender);
   }
 
@@ -90,8 +90,12 @@ library DungeonFactoryLib {
     ControllerContextLib.ControllerContext memory cc
   ) internal view {
     if (IERC721(heroToken).ownerOf(heroTokenId) != msgSender) revert IAppErrors.ErrorNotOwner(heroToken, heroTokenId);
-    if (ControllerContextLib.getHeroController(cc).heroClass(heroToken) == 0) revert IAppErrors.ErrorHeroIsNotRegistered(heroToken);
+    if (ControllerContextLib.heroController(cc).heroClass(heroToken) == 0) revert IAppErrors.ErrorHeroIsNotRegistered(heroToken);
     if (cc.controller.onPause()) revert IAppErrors.ErrorPaused();
+  }
+
+  function _onlySameLevels(uint dungeonNgLevel_, uint8 heroNgLevel_) internal pure {
+    if (dungeonNgLevel_ != heroNgLevel_) revert IAppErrors.ErrorWrongLevel(heroNgLevel_);
   }
 
   //endregion ------------------------ RESTRICTIONS
@@ -204,6 +208,10 @@ library DungeonFactoryLib {
   function maxAvailableBiome() internal view returns (uint8) {
     return _S().maxBiome;
   }
+
+  function dungeonNgLevel(uint64 dungeonId) internal view returns (uint) {
+    return _S().dungeonNgLevel[dungeonId];
+  }
   //endregion ------------------------ VIEWS
 
   //region ------------------------ ACTIONS
@@ -241,7 +249,7 @@ library DungeonFactoryLib {
     ControllerContextLib.ControllerContext memory cc = ControllerContextLib.init(controller);
     LaunchContext memory ctx;
 
-    ctx.heroController = ControllerContextLib.getHeroController(cc);
+    ctx.heroController = ControllerContextLib.heroController(cc);
     ctx.maxOpenedNgLevel = ctx.heroController.maxOpenedNgLevel();
     ctx.heroNgLevel = ctx.heroController.getHeroInfo(heroToken, heroTokenId).ngLevel;
 
@@ -250,14 +258,14 @@ library DungeonFactoryLib {
     if (!controller.validTreasuryTokens(treasuryToken)) revert IAppErrors.ErrorNotValidTreasureToken(treasuryToken);
 
     // select a logic for new dungeon
-    ctx.stats = ControllerContextLib.getStatController(cc).heroStats(heroToken, heroTokenId);
+    ctx.stats = ControllerContextLib.statController(cc).heroStats(heroToken, heroTokenId);
     ctx.dungNum = DungeonLib.getDungeonLogic(
       s,
       cc,
       uint8(ctx.stats.level),
       heroToken,
       heroTokenId,
-      ControllerContextLib.getOracle(cc).getRandomNumber(1e18, 0)
+      ControllerContextLib.oracle(cc).getRandomNumber(1e18, 0)
     );
 
     // register new dungeon
@@ -274,6 +282,8 @@ library DungeonFactoryLib {
     dungStatus.stages = dungAttr.stages;
     dungStatus.uniqObjects = dungAttr.uniqObjects;
 
+    s.dungeonNgLevel[dungeonId] = ctx.heroNgLevel;
+
     emit IApplicationEvents.DungeonRegistered(ctx.dungNum, dungeonId);
 
     // enter to the dungeon
@@ -288,7 +298,7 @@ library DungeonFactoryLib {
       ctx.treasuryAmount = DungeonLib.dungeonTreasuryReward(
         treasuryToken,
         uint(_S().maxBiome),
-        ControllerContextLib.getTreasury(cc).balanceOfToken(treasuryToken),
+        ControllerContextLib.treasury(cc).balanceOfToken(treasuryToken),
         StatLib.getVirtualLevel(
           ctx.stats.experience,
           StatLib.getVirtualLevel(ctx.stats.experience, uint(ctx.stats.level), true),
@@ -301,7 +311,7 @@ library DungeonFactoryLib {
     }
 
     if (ctx.treasuryAmount != 0) {
-      ControllerContextLib.getTreasury(cc).sendToDungeon(address(this), treasuryToken, ctx.treasuryAmount);
+      ControllerContextLib.treasury(cc).sendToDungeon(address(this), treasuryToken, ctx.treasuryAmount);
       DungeonLib._registerTreasuryToken(treasuryToken, s.dungeonStatuses[dungeonId].treasuryTokens, ctx.treasuryAmount);
     }
 
@@ -310,7 +320,7 @@ library DungeonFactoryLib {
 
   /// @notice Set boss completed for the given hero and given biome.
   /// @dev Set custom data for the hero: BOSS_COMPLETED_ = 1
-  function setBossCompleted(IController controller, uint32 objectId, address heroToken, uint heroTokenId, uint8 heroBiome) internal {
+  function setBossCompleted(IController controller, uint32 objectId, address heroToken, uint heroTokenId, uint8 heroBiome) external {
     if (controller.gameObjectController() != msg.sender) revert IAppErrors.ErrorNotGoc();
 
     IDungeonFactory.MainState storage s = _S();
@@ -461,6 +471,7 @@ library DungeonFactoryLib {
     _onlyEoa(isEoa);
     _checkOwnerRegisteredNotPaused(heroToken, heroTokenId, msgSender, cc);
     if (dungStatus.isCompleted) revert IAppErrors.ErrorDungeonCompleted();
+    _onlySameLevels(_S().dungeonNgLevel[dungId], ControllerContextLib.heroController(cc).getHeroInfo(heroToken, heroTokenId).ngLevel);
 
     // enter to the dungeon
     uint16 dungNum = dungStatus.dungNum;
@@ -484,7 +495,7 @@ library DungeonFactoryLib {
 
     OpenObjectContext memory ctx;
 
-    ctx.goc = ControllerContextLib.getGameObjectController(cc);
+    ctx.goc = ControllerContextLib.gameObjectController(cc);
 
     // check restrictions
     if (dungStatus.currentObject != 0) revert IAppErrors.ErrorNotReady();
@@ -492,7 +503,7 @@ library DungeonFactoryLib {
 
     // select new object and set it as current object in the dungeon
     ctx.currentStage = dungStatus.currentStage;
-    ctx.objectId = _generateObject(dungAttributes, dungStatus, ctx.currentStage, ctx.goc, ctx.dungHero, ctx.dungHeroId, ControllerContextLib.getStatController(cc));
+    ctx.objectId = _generateObject(dungAttributes, dungStatus, ctx.currentStage, ctx.goc, ctx.dungHero, ctx.dungHeroId, ControllerContextLib.statController(cc));
     if (ctx.objectId == 0) revert IAppErrors.ErrorNotObject1();
     dungStatus.currentObject = ctx.objectId;
 
@@ -557,18 +568,17 @@ library DungeonFactoryLib {
   }
 
   /// @notice Hero exists current dungeon forcibly same as when dying but without loosing life chance
-  function exitForcibly(
-    IController controller,
-    address heroToken,
-    uint heroTokenId,
-    address msgSender
-  ) external {
+  function exitSpecial(IController controller, address hero, uint heroId, address msgSender, DungeonLib.DungeonExitMode exitMode) external {
     ControllerContextLib.ControllerContext memory cc = ControllerContextLib.init(controller);
 
-    onlyItemController(cc);
+    if (exitMode == DungeonLib.DungeonExitMode.FORCED_EXIT_1) {
+      onlyItemController(cc);
+    } else { // DungeonLib.DungeonExitMode.HERO_SUICIDE_2
+      // it's is checked below that msgSender is the hero owner
+    }
 
     IDungeonFactory.MainState storage s = _S();
-    uint64 dungId = currentDungeon(heroToken, heroTokenId);
+    uint64 dungId = currentDungeon(hero, heroId);
 
     IDungeonFactory.DungeonStatus storage dungStatus = s.dungeonStatuses[dungId];
     _checkCurrentHero(dungStatus, msgSender, cc);
@@ -576,8 +586,7 @@ library DungeonFactoryLib {
     IDungeonFactory.DungeonAttributes storage dungAttributes = s.dungeonAttributes[dungStatus.dungNum];
 
     // Extract hero from the current dungeon, clear hero state.
-    // life => 1, mana => 0, lifeChance is NOT changed, hero is NOT burnt, items are kept equipped.
-    DungeonLib.exitForcibly(heroToken, heroTokenId, dungStatus, dungAttributes, cc);
+    DungeonLib.exitSpecial(hero, heroId, dungStatus, dungAttributes, cc, exitMode);
 
     // clear dungeon state
     _clear(dungStatus, dungAttributes.biome, dungId);
@@ -621,7 +630,7 @@ library DungeonFactoryLib {
     if (
       StatLib.mintDropChanceDelta(stats.experience, stats.level, dungAttributes.biome) != 0
       && !_S().bossCompleted[heroToken.packMapObject(uint64(heroTokenId), dungAttributes.biome)]
-    && stats.level >= dungAttributes.biome * 5
+      && stats.level >= dungAttributes.biome * 5
     ) {
       if (dungAttributes.biome == 1) {
         return uint32(BOSS_1_EVENT);
@@ -676,7 +685,7 @@ library DungeonFactoryLib {
     if (dungStatus.isCompleted) revert IAppErrors.ErrorDungeonCompleted();
     _checkOwnerRegisteredNotPaused(heroToken, heroTokenId, msgSender, cc);
 
-    if (!ControllerContextLib.getStatController(cc).isHeroAlive(heroToken, heroTokenId)) revert IAppErrors.ErrorHeroIsDead(heroToken, heroTokenId);
+    if (!ControllerContextLib.statController(cc).isHeroAlive(heroToken, heroTokenId)) revert IAppErrors.ErrorHeroIsDead(heroToken, heroTokenId);
     if (currentDungeon(heroToken, heroTokenId) != dungStatus.dungeonId) revert IAppErrors.ErrorHeroNotInDungeon();
   }
 

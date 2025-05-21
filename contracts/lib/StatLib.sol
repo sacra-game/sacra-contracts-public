@@ -421,16 +421,14 @@ library StatLib {
   }
 
   function updateCoreDependAttributes(
-    IController controller,
     bytes32[] storage attributes,
     bytes32[] storage bonusMain,
     bytes32[] storage bonusExtra,
     IStatController.ChangeableStats memory _heroStats,
     uint index,
-    address heroToken,
+    uint heroClass,
     int32 base
   ) internal {
-    uint heroClass = IHeroController(controller.heroController()).heroClass(heroToken);
     if (index == uint(IStatController.ATTRIBUTES.STRENGTH)) {
 
       attributes.setInt32(uint(IStatController.ATTRIBUTES.DAMAGE_MIN),

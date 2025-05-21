@@ -1,4 +1,32 @@
 // SPDX-License-Identifier: BUSL-1.1
+/**
+            ▒▓▒  ▒▒▒▒▒▓▓▓▓▓▓▓▓▓▓▓▓▓▓███▓▓▒     ▒▒▒▒▓▓▓▒▓▓▓▓▓▓▓██▓
+             ▒██▒▓▓▓▓█▓██████████████████▓  ▒▒▒▓███████████████▒
+              ▒██▒▓█████████████████████▒ ▒▓██████████▓███████
+               ▒███████████▓▒                   ▒███▓▓██████▓
+                 █████████▒                     ▒▓▒▓███████▒
+                  ███████▓      ▒▒▒▒▒▓▓█▓▒     ▓█▓████████
+                   ▒▒▒▒▒   ▒▒▒▒▓▓▓█████▒      ▓█████████▓
+                         ▒▓▓▓▒▓██████▓      ▒▓▓████████▒
+                       ▒██▓▓▓███████▒      ▒▒▓███▓████
+                        ▒███▓█████▒       ▒▒█████▓██▓
+                          ██████▓   ▒▒▒▓██▓██▓█████▒
+                           ▒▒▓▓▒   ▒██▓▒▓▓████████
+                                  ▓█████▓███████▓
+                                 ██▓▓██████████▒
+                                ▒█████████████
+                                 ███████████▓
+      ▒▓▓▓▓▓▓▒▓                  ▒█████████▒                      ▒▓▓
+    ▒▓█▒   ▒▒█▒▒                   ▓██████                       ▒▒▓▓▒
+   ▒▒█▒       ▓▒                    ▒████                       ▒▓█▓█▓▒
+   ▓▒██▓▒                             ██                       ▒▓█▓▓▓██▒
+    ▓█▓▓▓▓▓█▓▓▓▒        ▒▒▒         ▒▒▒▓▓▓▓▒▓▒▒▓▒▓▓▓▓▓▓▓▓▒    ▒▓█▒ ▒▓▒▓█▓
+     ▒▓█▓▓▓▓▓▓▓▓▓▓▒    ▒▒▒▓▒     ▒▒▒▓▓     ▓▓  ▓▓█▓   ▒▒▓▓   ▒▒█▒   ▒▓▒▓█▓
+            ▒▒▓▓▓▒▓▒  ▒▓▓▓▒█▒   ▒▒▒█▒          ▒▒█▓▒▒▒▓▓▓▒   ▓██▓▓▓▓▓▓▓███▓
+ ▒            ▒▓▓█▓  ▒▓▓▓▓█▓█▓  ▒█▓▓▒          ▓▓█▓▒▓█▓▒▒   ▓█▓        ▓███▓
+▓▓▒         ▒▒▓▓█▓▒▒▓█▒   ▒▓██▓  ▓██▓▒     ▒█▓ ▓▓██   ▒▓▓▓▒▒▓█▓        ▒▓████▒
+ ██▓▓▒▒▒▒▓▓███▓▒ ▒▓▓▓▓▒▒ ▒▓▓▓▓▓▓▓▒▒▒▓█▓▓▓▓█▓▓▒▒▓▓▓▓▓▒    ▒▓████▓▒     ▓▓███████▓▓▒
+*/
 pragma solidity 0.8.23;
 
 import "../interfaces/IItemControllerHelper.sol";
@@ -41,6 +69,14 @@ contract ItemControllerHelper is Controllable, ERC2771Context, IItemControllerHe
   function getGlobalParamValue(uint8 globalParam) external view returns (uint) {
     return ItemControllerHelperLib.getGlobalParamValue(globalParam);
   }
+
+  function getAugmentationProtectiveItem() external view returns (address) {
+    return address(uint160(ItemControllerHelperLib.getGlobalParamValue(uint8(IItemControllerHelper.GlobalParam.AUGMENTATION_PROTECTIVE_ITEM_3))));
+  }
+
+  function areSkillsAvailableForHero(address[] memory skillTokens, uint[] memory skillTokenIds, address hero, uint heroId) external view returns (bool) {
+    return ItemControllerHelperLib.areSkillsAvailableForHero(IController(controller()), skillTokens, skillTokenIds, hero, heroId);
+  }
   //endregion ------------------------ Views
 
   //region ------------------------ Deployer actions
@@ -57,7 +93,11 @@ contract ItemControllerHelper is Controllable, ERC2771Context, IItemControllerHe
   }
 
   function setUnionKeyPassItem(address item) external {
-  ItemControllerHelperLib.setUnionKeyPassItem(IController(controller()), item);
+    ItemControllerHelperLib.setUnionKeyPassItem(IController(controller()), item);
+  }
+
+  function setAugmentationProtectiveItem(address item) external {
+    ItemControllerHelperLib.setAugmentationProtectiveItem(IController(controller()), item);
   }
   //endregion ------------------------ Deployer actions
 
@@ -65,11 +105,11 @@ contract ItemControllerHelper is Controllable, ERC2771Context, IItemControllerHe
   /// @notice Check if list of {items} passed by {user} fit to config, ensure that user is able to combine items
   /// @param user User that is going to combine items
   /// @param items List of items to destroy. Should contain exactly same items as the config. Items order doesn't matter
-  /// @param tokens List of tokens of each item to destroy. Length of the tokens should fit to count specified in config
+  /// @param itemIds List of tokens of each item to destroy. Length of the tokens should fit to count specified in config
   /// @dev itemTokenIds[count tokens of i-th item][countItems]
   /// @return Item to mint in exchange of {items}
-  function prepareToCombine(address user, uint configId, address[] memory items, uint[][] memory tokens) external view returns (address) {
-    return ItemControllerHelperLib.prepareToCombine(user, configId, items, tokens);
+  function prepareToCombine(address user, uint configId, address[] memory items, uint[][] memory itemIds) external view returns (address) {
+    return ItemControllerHelperLib.prepareToCombine(user, configId, items, itemIds);
   }
 
   //endregion ------------------------ Item controller actions

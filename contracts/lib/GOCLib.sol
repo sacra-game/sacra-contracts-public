@@ -176,6 +176,12 @@ library GOCLib {
       || subType == IGOC.ObjectSubType.ENEMY_NPC_INSIDE_RARE_33
       || subType == IGOC.ObjectSubType.ENEMY_NPC_OUTSIDE_34
       || subType == IGOC.ObjectSubType.ENEMY_NPC_OUTSIDE_RARE_35
+      || subType == IGOC.ObjectSubType.ENEMY_NPC_ASCRA_42
+      || subType == IGOC.ObjectSubType.ENEMY_NPC_ASCRA_RARE_43
+      || subType == IGOC.ObjectSubType.ENEMY_NPC_BANFOOT_44
+      || subType == IGOC.ObjectSubType.ENEMY_NPC_BANFOOT_RARE_45
+      || subType == IGOC.ObjectSubType.ENEMY_NPC_ENFITILA_46
+      || subType == IGOC.ObjectSubType.ENEMY_NPC_ENFITILA_RARE_47
     ) {
       return IGOC.ObjectType.MONSTER;
     } else if (
@@ -202,6 +208,17 @@ library GOCLib {
       || subType == IGOC.ObjectSubType.STORY_OUTSIDE_29
       || subType == IGOC.ObjectSubType.STORY_INSIDE_RARE_30
       || subType == IGOC.ObjectSubType.STORY_OUTSIDE_RARE_31
+      || subType == IGOC.ObjectSubType.STORY_ASCRA_36
+      || subType == IGOC.ObjectSubType.STORY_ASCRA_RARE_37
+      || subType == IGOC.ObjectSubType.STORY_BANFOOT_38
+      || subType == IGOC.ObjectSubType.STORY_BANFOOT_RARE_39
+      || subType == IGOC.ObjectSubType.STORY_ENFITILIA_40
+      || subType == IGOC.ObjectSubType.STORY_ENFITILIA_RARE_41
+      || subType == IGOC.ObjectSubType.STORY_FREE_LAND_48
+      || subType == IGOC.ObjectSubType.STORY_GAME_THEORY_49
+      || subType == IGOC.ObjectSubType.STORY_WEARY_50
+      || subType == IGOC.ObjectSubType.STORY_EXHAUSTED_51
+      || subType == IGOC.ObjectSubType.STORY_TRAPPED_52
     ) {
       return IGOC.ObjectType.STORY;
     } else {

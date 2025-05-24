@@ -103,7 +103,7 @@ library ItemLib {
   function onlyNotConsumable(IItemController.ItemMeta memory meta, address item) internal pure {
     if (
       uint(meta.itemType) == 0
-      || meta.itemMetaType == uint8(IItemController.ItemMetaType.CONSUMABLE) // todo probably first check is enough?
+      || meta.itemMetaType == uint8(IItemController.ItemMetaType.CONSUMABLE)
     ) revert IAppErrors.Consumable(item);
   }
 
@@ -859,7 +859,7 @@ library ItemLib {
       _generateMissingRandomAttributes(info, meta.minRandomAttributes, ctx, random_);
 
       itemRarity = meta.defaultRarity == 0
-        ? _calculateRarity(ctx.raritySum, ctx.randomAttrCounter, meta.maxRandomAttributes)
+        ? _calculateRarity(ctx.counter == 0 ? 0 : ctx.raritySum / ctx.counter, ctx.randomAttrCounter, meta.maxRandomAttributes)
         : IItemController.ItemRarity(meta.defaultRarity);
     } else {
       itemRarity = IItemController.ItemRarity.UNKNOWN;
@@ -903,10 +903,11 @@ library ItemLib {
       // Generate necessary amount of attributes. Fist (shuffled) attributes are selected (MAX_CHANCE is used for each)
       for (uint i; i < remainingAttrsToGen; ++i) {
         uint idx = indicesToGen[i];
-        (int32 attr,) = _generateAttribute(info.mins[idx], info.maxs[idx], CalcLib.MAX_CHANCE, ctx.magicFind, random_);
+        (int32 attr, uint rarity) = _generateAttribute(info.mins[idx], info.maxs[idx], CalcLib.MAX_CHANCE, ctx.magicFind, random_);
         ctx.ids[ctx.counter] = info.ids[idx];
         ctx.values[ctx.counter] = attr;
         ctx.counter++;
+        ctx.raritySum += rarity;
       }
     }
   }
@@ -935,20 +936,16 @@ library ItemLib {
       if (info.chances[i] >= CalcLib.MAX_CHANCE || !ctx.stopGenerateRandom) {
         (int32 attr, uint rarity) = _generateAttribute(info.mins[i], info.maxs[i], info.chances[i], ctx.magicFind, random_);
 
-        // count only random attributes for calc rarity
         if (attr != 0) {
 
-          if (
-            info.chances[i] < CalcLib.MAX_CHANCE
-            // && random != 0 // commented: random = 0 can produce crash in _generateMissingRandomAttributes
-          ) {
+          if (info.chances[i] < CalcLib.MAX_CHANCE) {
             ctx.randomAttrCounter++;
-            ctx.raritySum += rarity;
           }
           ctx.ids[ctx.counter] = info.ids[i];
           ctx.values[ctx.counter] = attr;
           ctx.counter++;
           ctx.usedIndexes[i] = true;
+          ctx.raritySum += rarity;
         }
 
         // it is a bit less fair random for attrs in the end of the list, however we assume it should be pretty rare case
@@ -1047,10 +1044,14 @@ library ItemLib {
   //endregion ------------------------ Internal logic
 
   //region ------------------------ Internal utils
-  /// @param baseChance Chance in the range [0...MAX_CHANCE], MAX_CHANCE=1e9 means "mandatory" element.
-  /// @param random_ Pass CalcLib.pseudoRandom here, param is required for unit tests
-  /// @return attr Either 0 or min <= attr <= max
-  /// @return rarity Value in the range [0...MAX_CHANCE]; It's always 0 for mandatory elements
+  /// @notice Generates a random attribute value considering base drop chance and magic find bonus.
+  /// @param min      Lower bound of the attribute range (inclusive).
+  /// @param max      Upper bound of the attribute range (inclusive).
+  /// @param baseChance Base probability of dropping the attribute, in [0..MAX_CHANCE].
+  /// @param magicFind Magic find bonus value, influences both drop chance and selected value.
+  /// @param random_  Pseudo-random number generator function for testability.
+  /// @return attr    The generated attribute value (0 if not dropped, otherwise within [min..max]).
+  /// @return rarity  A measure of rarity in [0..MAX_CHANCE], proportional to how high the slot is within the range.
   function _generateAttribute(
     int32 min,
     int32 max,
@@ -1062,42 +1063,33 @@ library ItemLib {
     uint rarity
   ) {
     if (baseChance > CalcLib.MAX_CHANCE) revert IAppErrors.TooHighChance(baseChance);
-    uint diff = uint(CalcLib.absDiff(min, max));
     uint32 bonus = _mfBonus(magicFind); // 0..MAX_CHANCE
+    uint64 tmpChance = uint64(baseChance) * (uint64(CalcLib.MAX_CHANCE) + bonus) / uint64(CalcLib.MAX_CHANCE);
+    uint32 adjChance = tmpChance > CalcLib.MAX_CHANCE ? CalcLib.MAX_CHANCE : uint32(tmpChance);
 
-    uint32 adjChance = baseChance + uint32(uint256(baseChance) * bonus / CalcLib.MAX_CHANCE);
-    if (adjChance > CalcLib.MAX_CHANCE) adjChance = CalcLib.MAX_CHANCE;
-
-    uint32 random = CalcLib.pseudoRandomUint32Flex(CalcLib.MAX_CHANCE, random_);
-
-    if (random >= adjChance && adjChance < CalcLib.MAX_CHANCE) {
+    uint32 roll = CalcLib.pseudoRandomUint32Flex(CalcLib.MAX_CHANCE, random_);
+    if (roll >= adjChance && adjChance < CalcLib.MAX_CHANCE) {
       return (0, 0);
     }
 
-    // refresh for full random
-    random = CalcLib.pseudoRandomUint32Flex(CalcLib.MAX_CHANCE, random_);
-
-    uint scaled = uint(random) * (CalcLib.MAX_CHANCE - bonus) / CalcLib.MAX_CHANCE;
-
-    uint boxSize = (adjChance / (diff + 1));
-    if (boxSize == 0) {
-      boxSize = 1;
-    }
-    uint box = scaled / boxSize; // 0 … diff (rounded down)
-    if (box > diff) {
-      box = diff;
-    }
-    int32 k = int32(int(diff - box));
-    attr = min + k;
-
-    if (diff == 0 || baseChance >= CalcLib.MAX_CHANCE) {
-      // chance == CalcLib.MAX_CHANCE => mandatory element
-      // return zero random - no need to calc rarity for mandatory elements
-      rarity = 0;
-    } else {
-      rarity = uint32(uint(int(k)) * uint(CalcLib.MAX_CHANCE) / diff);
+    uint diff = uint(CalcLib.absDiff(min, max));
+    if (diff == 0) {
+      return (min, CalcLib.MAX_CHANCE);
     }
 
+    uint slot;
+
+    {
+      uint32 rndVal = CalcLib.pseudoRandomUint32Flex(CalcLib.MAX_CHANCE, random_);
+      uint baseSlot = uint(rndVal) * (diff + 1) / (uint(CalcLib.MAX_CHANCE) + 1);
+      slot = baseSlot + ((diff - baseSlot) * bonus / CalcLib.MAX_CHANCE);
+      if (slot > diff) {
+        slot = diff;
+      }
+    }
+
+    attr = min + int32(int(slot));
+    rarity = uint32(slot * CalcLib.MAX_CHANCE / diff);
     return (attr, rarity);
   }
 
@@ -1108,18 +1100,16 @@ library ItemLib {
   }
 
   /// @notice Calculate item rarity
-  /// @param raritySum Total sum rarity values of all random attributes in ItemGenerateInfo, [0...MAX_CHANCE/attrCounter]
+  /// @param averageRarity Average rarity value of all attributes in ItemGenerateInfo, [0...MAX_CHANCE/attrCounter]
   /// @param attrCounter Count of random attributes in ItemGenerateInfo
   /// @param maxAttr Index of max allowed random attribute (all attributes with higher indices are not random)
   /// @return item rarity
-  function _calculateRarity(uint raritySum, uint attrCounter, uint maxAttr) internal pure returns (
+  function _calculateRarity(uint averageRarity, uint attrCounter, uint maxAttr) internal pure returns (
     IItemController.ItemRarity
   ) {
     if (attrCounter == 0) {
       return IItemController.ItemRarity.NORMAL;
     }
-
-    uint averageRarity = raritySum / attrCounter;
 
     if (averageRarity > CalcLib.MAX_CHANCE) revert IAppErrors.TooHighRandom(averageRarity);
 

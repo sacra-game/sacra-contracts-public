@@ -39,6 +39,15 @@ library StatControllerLib {
 
   /// @notice Custom data of the hero. Value is incremented on every life-chance lost
   bytes32 public constant DEATH_COUNT_HASH = bytes32("DEATH_COUNT");
+
+  /// @notice Custom data of the hero. Value is locate in Banfoot dungeon
+  bytes32 public constant DUNGEON_BANFOOT = bytes32("DUNG_BF");
+
+  /// @notice Custom data of the hero. Value is locate in Enfitilia dungeon
+  bytes32 public constant DUNGEON_ENFITILIA = bytes32("DUNG_EN");
+
+  /// @notice Custom data of the hero. Value is locate in Askra dungeon
+  bytes32 public constant DUNGEON_ASKRA = bytes32("DUNG_AS");
   //endregion ------------------------ Constants
 
   //region ------------------------ RESTRICTIONS

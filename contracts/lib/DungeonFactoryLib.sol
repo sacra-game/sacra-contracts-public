@@ -63,6 +63,9 @@ library DungeonFactoryLib {
   uint private constant BOSS_2_EVENT = 2290232;
   uint private constant BOSS_3_EVENT = 3290332;
   uint private constant BOSS_4_EVENT = 4290432;
+  uint private constant BOSS_5_ASCRA_EVENT = 5360522;
+  uint private constant BOSS_5_BANFOOT_EVENT = 5380513;
+  uint private constant BOSS_5_ENFITILIA_EVENT = 5400532;
 
   //region ------------------------ RESTRICTIONS
 
@@ -643,6 +646,20 @@ library DungeonFactoryLib {
       }
       if (dungAttributes.biome == 4) {
         return uint32(BOSS_4_EVENT);
+      }
+      if (dungAttributes.biome == 5) {
+        uint inDungeonBanfoot = sc.heroCustomData(heroToken, heroTokenId, StatControllerLib.DUNGEON_BANFOOT);
+        if (inDungeonBanfoot == 1) {
+          return uint32(BOSS_5_BANFOOT_EVENT);
+        }
+        uint inDungeonEnfitilia = sc.heroCustomData(heroToken, heroTokenId, StatControllerLib.DUNGEON_ENFITILIA);
+        if (inDungeonEnfitilia == 1) {
+          return uint32(BOSS_5_ENFITILIA_EVENT);
+        }
+        uint inDungeonAscra = sc.heroCustomData(heroToken, heroTokenId, StatControllerLib.DUNGEON_ASKRA);
+        if (inDungeonAscra == 1) {
+          return uint32(BOSS_5_ASCRA_EVENT);
+        }
       }
     }
 
